@@ -4,30 +4,57 @@ bot_runner.py
 
 Точка входа Nota V2.
 
-* Создаём объект Bot.
-* Собираем Dispatcher, подключая все хендлеры (router) из app.routers.telegram_bot.
-* Запускаем long-polling.
+* Создаёт экземпляр Bot.
+* Собирает единый Dispatcher, подключая router-ы из `app.routers.telegram_bot`.
+* Запускает long-polling и выводит подробные логи в stdout.
+
+Запуск:
+
+    python bot_runner.py                # вручную
+    # или через systemd-unit (см. deploy/systemd/notav2-bot.service)
 """
 
-import asyncio
-from aiogram import Bot, Dispatcher
+from __future__ import annotations
 
+import asyncio
+import logging
+
+from aiogram import Bot, Dispatcher
 from app.config import settings
-from app.routers.telegram_bot import router   # ← именно router, не dp
+from app.routers.telegram_bot import router           # router содержит все хендлеры
+
+# ───────────────────────  Логирование  ──────────────────────────
+#
+# INFO-уровень показывает старт/стоп polling’а и любые
+# сообщения logger-ов aiogram’а.  DEBUG можно включить, задав
+# переменную среды LOG_LEVEL=DEBUG.
+#
+LOG_LEVEL = settings.model_config.get("env_file")  # просто чтобы не ругался mypy
+log_level = logging.getLevelName(
+    (settings.model_config.get("log_level") or "INFO").upper()
+)
+logging.basicConfig(
+    level=log_level,  # INFO по умолчанию
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+# ────────────────────────────────────────────────────────────────
 
 
 async def main() -> None:
-    """
-    Стартует Telegram-бот в режиме long-polling.
-    """
+    """Запускает polling-loop aiogram."""
     bot = Bot(token=settings.telegram_token)
+    dp = Dispatcher()
+    dp.include_router(router)
 
-    dp = Dispatcher()          # единый диспетчер для всего приложения
-    dp.include_router(router)  # подключаем хендлеры
-
-    # при необходимости можно добавить middleware / фильтры
-    await dp.start_polling(bot)
+    logger.info("🚀 Nota V2 bot starting polling…")
+    await dp.start_polling(bot, allowed_updates=[])   # пустой список = все стандартные
+    logger.info("✅ Polling finished (graceful shutdown)")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("🛑 Bot stopped by user interrupt")
