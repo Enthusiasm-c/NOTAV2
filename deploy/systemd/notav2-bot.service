@@ -1,0 +1,15 @@
+[Unit]
+Description=Nota V2 Telegram Bot
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+User=nota                          # <-- ваш пользователь
+WorkingDirectory=/opt/notav2       # <-- путь к проекту
+EnvironmentFile=/opt/notav2/.env
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/opt/notav2/venv/bin/python bot_runner.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
