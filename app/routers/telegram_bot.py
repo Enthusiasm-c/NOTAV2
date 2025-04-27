@@ -1,133 +1,90 @@
-import json
-from aiogram import Router, types, F
+import logging
+from aiogram import Router, F, types
+from aiogram.filters import Command
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from app.db import SessionLocal
-from app.models.product import Product
-from app.models.invoice_state import InvoiceState, FSMState
-from app.utils.markdown import make_invoice_markdown
-from app.utils.syrve_export import build_xml, post_to_syrve
 
-dp = Router()
-router = dp        # экспорт под вторым именем
+logger = logging.getLogger(__name__)
 
-# Класс состояний (FSM)
-class Notafsm:
-    waiting_photo = "waiting_photo"
-    reviewing = "reviewing"
-    editing = "editing"
-    confirming = "confirming"
-    done = "done"
+router = Router()
 
-# --- EDITING CALLBACK HANDLER ---
 
-@dp.callback_query(lambda c: c.data.startswith("edit:"))
-async def handle_editing_callback(call: CallbackQuery, state: FSMContext):
-    # edit:<invoice_id>:<item_idx>:<action>
-    _, invoice_id, item_idx, action = call.data.split(":")
-    data = await state.get_data()
-    draft = data.get("draft", {})
-    positions = draft.get("positions", [])
-    pos = positions[int(item_idx)]
+class InvoiceFSM(StatesGroup):
+    WaitingPhoto = State()
+    Reviewing = State()
+    Confirming = State()
 
-    if action == "accept":
-        pos["status"] = "accepted"
-        await call.answer("Позиция оставлена без изменений 👌")
-    elif action == "update":
-        await state.update_data(editing_idx=item_idx)
-        await call.message.answer(
-            f"Изменение позиции:\n"
-            f"Наименование: {pos['name']}\nКол-во: {pos['quantity']}\n"
-            f"Ед.: {pos['unit']}\nЦена: {pos['price']}\nСумма: {pos['sum']}\n\n"
-            f"Напишите исправленное наименование (или /skip)."
-        )
-        await state.set_state("editing_item")
-        return
-    elif action == "new_product":
-        pos["status"] = "new"
-        # Логика добавления товара в БД Products и обновления lookup — реализуйте здесь.
-        await call.answer("Будет создан новый товар!")
-    await state.update_data(draft=draft)
-    await show_next_editing(call.message, state)
 
-async def show_next_editing(msg, state: FSMContext):
-    """Показывает след. неразрешённую позицию и её варианты управления."""
-    data = await state.get_data()
-    draft = data.get("draft", {})
-    positions = draft.get("positions", [])
-    for idx, pos in enumerate(positions):
-        if pos.get("status") not in ("accepted", "new"):
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="✔ Оставить как есть",
-                            callback_data=f"edit:{draft.get('invoice_id','')}:"
-                                          f"{idx}:accept"
-                        ),
-                        InlineKeyboardButton(
-                            text="✏ Изменить",
-                            callback_data=f"edit:{draft.get('invoice_id','')}:"
-                                          f"{idx}:update"
-                        ),
-                        InlineKeyboardButton(
-                            text="➕ Создать новый товар",
-                            callback_data=f"edit:{draft.get('invoice_id','')}:"
-                                          f"{idx}:new_product"
-                        ),
-                    ]
-                ]
-            )
-            await msg.answer(
-                f"Позиция {idx + 1}:\nНаименование: {pos['name']}\n"
-                f"Кол-во: {pos['quantity']}, {pos['unit']}\nЦена: {pos['price']}\n"
-                f"Совпадение: {pos.get('confidence', 0) * 100:.1f}%",
-                reply_markup=kb
-            )
-            return
-    # Все обработаны — переход к Confirming
-    await state.set_state(Notafsm.confirming)
-    md = make_invoice_markdown(draft)
-    kb = InlineKeyboardMarkup(
+@router.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    """Приветствие и переход в состояние ожидания фото."""
+    await state.clear()
+    await state.set_state(InvoiceFSM.WaitingPhoto)
+    logger.info(f"User {message.from_user.id} started bot.")
+    await message.answer(
+        "Привет! Я Nota V2 — помогаю загружать накладные в Syrve.\n"
+        "Пришли фото накладной, а дальше я всё сделаю сам."
+    )
+
+
+@router.message(F.photo)
+async def handle_photo(message: types.Message, state: FSMContext):
+    """Обработка фото, переход к Reviewing, заглушка распознавания."""
+    await state.set_state(InvoiceFSM.Reviewing)
+    logger.info(f"User {message.from_user.id} sent a photo (invoice).")
+    await message.answer("Фото получено, распознаю… (это может занять ~30 сек)")
+
+    # --- Заглушка GPT OCR/Parsing ---
+    # Здесь должны быть вызовы await gpt_ocr.ocr(), await gpt_parsing.parse()
+    # Для MVP — фиксированный результат:
+    fake_result = {
+        "positions": [
+            {"name": "Товар", "quantity": 1}
+        ]
+    }
+    await state.update_data(invoice=fake_result)
+    logger.info(f"Invoice recognized: {fake_result}")
+
+    # --- Кнопки подтверждения ---
+    kb = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="✅ Отправить в Syrve",
-                    callback_data=f"confirm:{draft.get('invoice_id','')}:commit"
-                ),
-                InlineKeyboardButton(
-                    text="🔄 Отмена",
-                    callback_data=f"confirm:{draft.get('invoice_id','')}:cancel"
-                ),
+                types.InlineKeyboardButton(text="✅ Да", callback_data="confirm:yes"),
+                types.InlineKeyboardButton(text="✏ Нет", callback_data="confirm:no"),
             ]
         ]
     )
-    await msg.answer(f"**Черновик накладной:**\n\n{md}", reply_markup=kb, parse_mode="Markdown")
+    await message.answer(
+        f"Нашёл {len(fake_result['positions'])} позицию(и), всё верно?",
+        reply_markup=kb
+    )
+    await state.set_state(InvoiceFSM.Confirming)
 
-# --- CONFIRMING CALLBACK HANDLER ---
 
-@dp.callback_query(lambda c: c.data.startswith("confirm:"))
-async def handle_confirming_callback(call: CallbackQuery, state: FSMContext):
-    # confirm:<invoice_id>:<action>
-    _, invoice_id, action = call.data.split(":")
-    data = await state.get_data()
-    draft = data.get("draft", {})
-    if action == "commit":
-        xml = build_xml(draft)
-        ok, msg_text = await post_to_syrve(xml)
-        result_text = (f"✅ Успех! Накладная №{invoice_id} отправлена." 
-                       if ok else f"❌ Ошибка: {msg_text}")
-        await state.set_state(Notafsm.done)
-        await call.message.answer(result_text)
-    elif action == "cancel":
-        await call.message.answer("Операция отменена.")
-        await state.set_state(Notafsm.reviewing)
+@router.callback_query(F.data.startswith("confirm:"))
+async def handle_confirm(call: types.CallbackQuery, state: FSMContext):
+    """Обработка выбора Да/Нет на этапе подтверждения накладной."""
+    answer = call.data.split(":", 1)[1]
+    user_id = call.from_user.id
+    if answer == "yes":
+        logger.info(f"User {user_id} confirmed invoice.")
+        await call.message.answer(
+            "Накладная отправлена! Готов принять следующую."
+        )
+        await state.clear()
+        await state.set_state(InvoiceFSM.WaitingPhoto)
     else:
-        await call.message.answer("Неопознанная команда.")
-    # --- Сохраняем draft (BД) после любого действия
-    async with SessionLocal() as session:
-        invoice_state = await session.get(InvoiceState, invoice_id)
-        if invoice_state:
-            invoice_state.json_draft = json.dumps(draft, ensure_ascii=False)
-            invoice_state.state = Notafsm.confirming
-            await session.commit()
+        logger.info(f"User {user_id} declined invoice (edit requested).")
+        await call.message.answer(
+            "Функция редактирования в разработке. Пришли новое фото накладной."
+        )
+        await state.clear()
+        await state.set_state(InvoiceFSM.WaitingPhoto)
+    await call.answer()
+
+
+@router.message(F.text)
+async def fallback(message: types.Message, state: FSMContext):
+    """Фоллбек для любых нераспознанных сообщений."""
+    logger.info(f"User {message.from_user.id} sent text: {message.text!r}")
+    await message.answer("Пришли фото накладной или /start.")
