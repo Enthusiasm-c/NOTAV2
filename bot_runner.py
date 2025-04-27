@@ -13,7 +13,8 @@ bot_runner.py
     python bot_runner.py                # вручную
     # или через systemd-unit (см. deploy/systemd/notav2-bot.service)
 """
-
+from app.routers.telegram_bot import router
+dp.include_router(router)
 from __future__ import annotations
 
 import asyncio
