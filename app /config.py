@@ -1,26 +1,18 @@
-__all__ = ["settings"]
-
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    """App config
+    telegram_token: str
+    db_url: str
+    gpt_ocr_url: str = "https://gpt-ocr/"
+    gpt_parsing_url: str = "https://gpt-parse/"
+    fuzzy_threshold: float = 0.85
+    syrve_url: str
+    syrve_token: str | None = None
 
-    Variables:
-        telegram_token: str    # Токен Telegram-бота
-        db_url: str      # URI для подключения к PostgreSQL
-        gpt_ocr_url: str
-        gpt_parsing_url: str
-        fuzzy_threshold: float
-        syrve_url: str
-        syrve_token: str|None
-    """
-
-    telegram_token: str = "TELEGRAM_TOKEN"
-    db_url: str = "postgresql+asyncpg://user:pass@localhost/invoices_db"
-    gpt_ocr_url: str = "http://localhost:8001/gpt-ocr"        # Dummy/mock
-    gpt_parsing_url: str = "http://localhost:8001/gpt-parse"
-    fuzzy_threshold: float = 0.9
-    syrve_url: str = "http://localhost:8080/syrve"
-    syrve_token: str | None = None  # TODO: Заполнить реальный ключ
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
 settings = Settings()
