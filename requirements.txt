@@ -12,3 +12,4 @@ aiosqlite>=0.19
 openai>=1.14
 aiofiles
 structlog
+alembic>=1.13
