@@ -9,3 +9,6 @@ structlog
 python-dotenv
 pytest
 aiosqlite>=0.19
+openai>=1.14
+aiofiles
+structlog
