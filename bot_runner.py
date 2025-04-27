@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 bot_runner.py
 ~~~~~~~~~~~~~
@@ -13,16 +15,13 @@ bot_runner.py
     python bot_runner.py                # вручную
     # или через systemd-unit (см. deploy/systemd/notav2-bot.service)
 """
-from app.routers.telegram_bot import router
-dp.include_router(router)
-from __future__ import annotations
 
 import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
 from app.config import settings
-from app.routers.telegram_bot import router           # router содержит все хендлеры
+from app.routers.telegram_bot import router  # router содержит все хендлеры
 
 # ───────────────────────  Логирование  ──────────────────────────
 #
@@ -30,9 +29,8 @@ from app.routers.telegram_bot import router           # router содержит 
 # сообщения logger-ов aiogram’а.  DEBUG можно включить, задав
 # переменную среды LOG_LEVEL=DEBUG.
 #
-LOG_LEVEL = settings.model_config.get("env_file")  # просто чтобы не ругался mypy
 log_level = logging.getLevelName(
-    (settings.model_config.get("log_level") or "INFO").upper()
+    (getattr(settings, "log_level", None) or "INFO").upper()
 )
 logging.basicConfig(
     level=log_level,  # INFO по умолчанию
