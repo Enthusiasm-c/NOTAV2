@@ -1,22 +1,7 @@
-__all__ = ["InvoiceItem"]
-
 from sqlalchemy import Column, Integer, ForeignKey, String, Numeric, Float
-from .base import Base
+from app.db import Base
 
 class InvoiceItem(Base):
-    """Позиция в накладной
-
-    Variables:
-        id: int
-        invoice_id: int (FK)
-        product_id: int (nullable)
-        parsed_name: str
-        quantity: float
-        unit: str
-        price: float
-        sum: float
-        match_confidence: float
-    """
     __tablename__ = "invoice_items"
     id = Column(Integer, primary_key=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False)
