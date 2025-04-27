@@ -1,19 +1,14 @@
-__all__ = ["call_gpt_ocr"]
-
 import httpx
-from ..config import settings
+from app.config import settings
+from app.utils.logger import logger
 
 async def call_gpt_ocr(image_bytes: bytes) -> str:
-    """Вызывает GPT-4.0 OCR API (или mock),
-    возвращает raw text"""
-    headers = {"Authorization": "Bearer FAKE_KEY"}
-    files = {"image": ("invoice.jpg", image_bytes)}
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(settings.gpt_ocr_url, files=files, headers=headers)
+    """Call GPT-OCR Vision endpoint, return recognized raw text."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            r = await client.post(settings.gpt_ocr_url, files={"image": ("invoice.jpg", image_bytes)})
             r.raise_for_status()
-            data = r.json()
-            return data["raw_text"]
-    except Exception:
-        # Mock: просто возвращаем текст "Recognized Text"
-        return "Sample OCR invoice: Supplier: ООО Ромашка; Date: 2025-04-10; ..."
+            return r.json()["raw_text"]
+        except Exception as e:
+            logger.error("OCR request failed", error=str(e))
+            return "Ошибка OCR"  # fallback for demo/mock
