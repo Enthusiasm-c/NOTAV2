@@ -9,6 +9,7 @@ from app.utils.markdown import make_invoice_markdown
 from app.utils.syrve_export import build_xml, post_to_syrve
 
 dp = Router()
+router = dp        # экспорт под вторым именем
 
 # Класс состояний (FSM)
 class Notafsm:
