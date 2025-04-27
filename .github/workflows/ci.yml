@@ -5,6 +5,10 @@ on: [push, pull_request]   # запуск при push и PR
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .       # добавляет корень репо в импорт-путь
+    steps:
+      - uses: actions/checkout@v4
 
     steps:
       - uses: actions/checkout@v4
