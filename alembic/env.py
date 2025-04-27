@@ -1,71 +1,89 @@
 # alembic/env.py
+"""
+Async Alembic environment for Nota V2
+─────────────────────────────────────
+* Работает с SQLAlchemy 2.0 (async engine).
+* target_metadata = Base.metadata (из app.models.base).
+* Добавляем корень проекта в PYTHONPATH, чтобы импортировать пакет `app`
+  даже если Alembic запущен из-под cron/CI.
+
+Команды:
+    alembic revision --autogenerate -m "comment"
+    alembic upgrade head
+"""
+
+from __future__ import annotations
 
 import asyncio
-from logging.config import fileConfig
-
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+import logging
+import sys
+from pathlib import Path
+from typing import AsyncGenerator
 
 from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_engine_from_config
 
-import app.models.base  # noqa: F401
-from app.models.base import Base
+# ────────────────────────── PYTHONPATH ────────────────────────────────
+# /opt/notav2/alembic/env.py  →  parents[1] == /opt/notav2
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
-config = context.config
+# ────────────────────────── App metadata ──────────────────────────────
+from app.models.base import Base  # noqa: E402
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-fileConfig(config.config_file_name)
-
-# add your model's MetaData object here for 'autogenerate' support
 target_metadata = Base.metadata
 
-# get db url from env or config
-def get_url():
-    return config.get_main_option("sqlalchemy.url")
+# ────────────────────────── Logging setup ─────────────────────────────
+config = context.config
+logging.basicConfig()
+logger = logging.getLogger("alembic.env")
 
-def run_migrations_offline():
-    """Run migrations in 'offline' mode."""
-    url = get_url()
+# ────────────────────────── Async engine factory ──────────────────────
+def get_async_engine() -> AsyncEngine:
+    """Create AsyncEngine using config in alembic.ini."""
+    return async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+        future=True,
+    )
+
+
+# ────────────────────────── Offline mode ──────────────────────────────
+def run_migrations_offline() -> None:
+    """Run migrations in --sql mode."""
+    url: str = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True,
-        render_as_batch=True,
     )
 
     with context.begin_transaction():
         context.run_migrations()
 
-def do_run_migrations(connection: Connection):
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-        render_as_batch=True,
-    )
 
-    with context.begin_transaction():
-        context.run_migrations()
+# ────────────────────────── Online mode ───────────────────────────────
+async def run_async_migrations(connection: AsyncConnection) -> None:
+    """Actual migration logic executed inside an async connection."""
+    context.configure(connection=connection, target_metadata=target_metadata)
 
-async def run_migrations_online():
-    """Run migrations in 'online' mode."""
+    async with context.begin_transaction():
+        await connection.run_sync(context.run_migrations)
 
-    connectable = create_async_engine(
-        get_url(),
-        poolclass=pool.NullPool,
-    )
 
+async def run_migrations_online() -> None:
+    """Create engine → async connection → run migrations."""
+    connectable = get_async_engine()
     async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+        await run_async_migrations(connection)
 
     await connectable.dispose()
 
+
+# ────────────────────────── Entrypoint ────────────────────────────────
 if context.is_offline_mode():
     run_migrations_offline()
 else:
