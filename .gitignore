@@ -1,0 +1,86 @@
+############################################
+#  Python / FastAPI backend project       #
+############################################
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+# Virtual-envs & python tooling
+.env/
+.venv/
+venv/
+ENV/
+env/
+.Python
+pip-wheel-metadata/
+poetry.lock
+poetry.toml
+pyproject.lock
+
+# Distribution / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Unit-test / coverage artifacts
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.cache/
+nosetests.xml
+pytest_cache/
+.coverage
+.cache/
+cover/
+
+# MyPy / Ruff / pylint
+.mypy_cache/
+.dmypy.json
+ruff_cache/
+pylint-report.txt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs & local data
+*.log
+*.sqlite3
+*.db
+*.pid
+
+# Environment variables / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# macOS / Windows system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Docker / Compose overrides
+docker-compose.override.yml
+
+# VSCode launch / tasks
+.vscode/
+*.code-workspace
+
+# Misc
+*.bak
+*.swp
+*.tmp
