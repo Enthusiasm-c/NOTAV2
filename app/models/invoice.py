@@ -23,15 +23,8 @@ class Invoice(Base, IntPK):
 
     total_sum: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
 
-    # дочерние строки и лукапы
+    # дочерние строки
     items: Mapped[list["InvoiceItem"]] = relationship(
-        "InvoiceItem",
-        back_populates="invoice",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-    name_lookups: Mapped[list["InvoiceNameLookup"]] = relationship(
-        "InvoiceNameLookup",
         back_populates="invoice",
         cascade="all, delete-orphan",
         passive_deletes=True,
