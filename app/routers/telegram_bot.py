@@ -18,9 +18,47 @@ from app.routers.gpt_ocr import ocr
 from app.routers.gpt_parsing import parse
 from app.routers.fuzzy_match import fuzzy_match_product
 from app.db import SessionLocal
-from app.utils.xml_generator import build_xml
-from app.utils.unit_converter import normalize_unit
+from app.utils.xml_generator import build_xml  # если уже есть
 from app.config import settings
+
+# Встроенная функция вместо импорта из app.utils.unit_converter
+def normalize_unit(unit_str: str) -> str:
+    """Встроенная функция нормализации единиц измерения."""
+    if not unit_str:
+        return ""
+    
+    unit_str = unit_str.lower().strip()
+    
+    # Словарь нормализации единиц измерения (English + Indonesian)
+    aliases = {
+        # English volume units
+        "l": "l", "ltr": "l", "liter": "l", "liters": "l",
+        "ml": "ml", "milliliter": "ml", "milliliters": "ml",
+        
+        # English weight units
+        "kg": "kg", "kilo": "kg", "kilogram": "kg",
+        "g": "g", "gr": "g", "gram": "g", "grams": "g",
+        
+        # English countable units
+        "pcs": "pcs", "pc": "pcs", "piece": "pcs", "pieces": "pcs",
+        "pack": "pack", "package": "pack", "pkg": "pack",
+        "box": "box", "boxes": "box",
+        
+        # Indonesian volume units
+        "liter": "l", "lt": "l",
+        "mililiter": "ml", "mili": "ml",
+        
+        # Indonesian weight units
+        "kilogram": "kg", "kilo": "kg",
+        "gram": "g",
+        
+        # Indonesian countable units
+        "buah": "pcs", "biji": "pcs", "pcs": "pcs", "potong": "pcs",
+        "paket": "pack", "pak": "pack",
+        "kotak": "box", "dus": "box", "kardus": "box",
+    }
+    
+    return aliases.get(unit_str, unit_str)
 
 logger = structlog.get_logger()
 router = Router(name=__name__)
@@ -36,7 +74,7 @@ async def _run_pipeline(file_id: str, bot: Bot) -> dict:
 
 def positions_summary(data: dict) -> str:
     return "\n".join(
-        f"• {p['name']} × {p['quantity']} {p.get('unit', '')}" for p in data["positions"]
+        f"• {p['name']} × {p['quantity']}" for p in data["positions"]
     )
 
 
@@ -113,16 +151,26 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
 # ───────────────────────── callbacks ────────────────────────
 @router.callback_query(F.data == "inv_ok")
 async def cb_ok(c: CallbackQuery, state: FSMContext, bot: Bot):
-    data = (await state.get_data())["invoice"]
-    xml_str = build_xml(data)
-
-    # Сохраняем в базу данных и отправляем в Syrve
-    # TODO: Реализовать сохранение в БД
+    data = (await state.get_data()).get("invoice", {})
     
-    # здесь можете отправить xml в Syrve; пока просто лог
-    logger.info("XML ready", xml_len=len(xml_str))
-
-    await c.message.answer("✅ Накладная загружена в Syrve.")
+    if not data:
+        await c.message.answer("❌ Данные накладной отсутствуют. Попробуйте снова.")
+        await c.answer()
+        return
+    
+    try:
+        xml_str = build_xml(data)
+        
+        # Здесь можно добавить код для сохранения в БД
+        
+        # здесь можете отправить xml в Syrve; пока просто лог
+        logger.info("XML ready", xml_len=len(xml_str))
+        
+        await c.message.answer("✅ Накладная загружена в Syrve.")
+    except Exception as e:
+        logger.exception("Failed to process invoice", error=str(e))
+        await c.message.answer("❌ Ошибка при обработке накладной.")
+    
     await c.answer()
 
 
