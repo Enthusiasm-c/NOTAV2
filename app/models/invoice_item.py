@@ -1,29 +1,47 @@
+# app/models/invoice_item.py
+"""
+Строка накладной (InvoiceItem)
+──────────────────────────────
+* FK на Invoice и Product
+"""
+
 from __future__ import annotations
 
-from sqlalchemy import Column, ForeignKey, Integer, Numeric, String
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, Float, String, ForeignKey
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from .base import Base
 
 
 class InvoiceItem(Base):
-    """Строка накладной (связь с Product по fuzzy-match, если найден)."""
-
     __tablename__ = "invoice_items"
 
-    id: int = Column(Integer, primary_key=True, autoincrement=True)
-    invoice_id: int = Column(
-        Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String, nullable=True)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sum: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # ──────────── связи ────────────
+    invoice_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("invoices.id"), nullable=False
     )
-    product_id: int | None = Column(Integer, ForeignKey("products.id"), nullable=True)
+    invoice: Mapped["Invoice"] = relationship(
+        "Invoice", back_populates="items"
+    )
 
-    parsed_name: str = Column(String, nullable=False)   # как увидел OCR/парсер
-    quantity = Column(Numeric)                          # количество
-    unit: str | None = Column(String)                   # л / кг / шт …
-    price = Column(Numeric)                             # цена за единицу
-    sum = Column(Numeric)                               # итог по строке
-    match_confidence = Column(Numeric)                  # 0‒1 от fuzzy-match
+    product_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("products.id"), nullable=True
+    )
+    product: Mapped["Product | None"] = relationship(
+        "Product", back_populates="invoice_items"
+    )
 
-    # ――― relationships ―――
-    product = relationship("Product", back_populates="items", lazy="joined")
-    invoice = relationship("Invoice", back_populates="items", lazy="joined")
+    # ─────────── удобство ───────────
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<InvoiceItem id={self.id} name={self.name!r} "
+            f"qty={self.quantity} unit={self.unit}>"
+        )
