@@ -13,7 +13,7 @@ class InvoiceItem(Base):
 
     __tablename__ = "invoice_items"
 
-    id: Mapped[int] = int_pk
+    id: Mapped[IntPK]
     invoice_id: Mapped[int] = mapped_column(
         ForeignKey("invoices.id", ondelete="CASCADE"),
         index=True,
