@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-from sqlalchemy import String
+from sqlalchemy import String, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, IntPK
 
-__all__ = ["Supplier"]
 
+class Supplier(Base):
+    """Поставщик товаров."""
 
-class Supplier(Base, IntPK):
-    __tablename__ = "suppliers"
+    # ─── PK ────────────────────────────────────────────────────────────────
+    id: Mapped[IntPK]  # type: ignore[valid-type]
 
-    # «человеческое» название
-    name: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
-
-    # опциональный код из учётной системы
+    # ─── Данные поставщика ────────────────────────────────────────────────
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     code: Mapped[str | None] = mapped_column(String(64), unique=True)
 
-    # связь «1-N» с накладными
+    # ─── Связи ─────────────────────────────────────────────────────────────
     invoices: Mapped[list["Invoice"]] = relationship(
+        "Invoice",
         back_populates="supplier",
         cascade="all, delete-orphan",
         passive_deletes=True,
