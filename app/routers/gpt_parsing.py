@@ -6,6 +6,9 @@ Invoice-parser for Nota V2.
 • If the GPT_PARSING_URL environment variable is empty — returns mock-JSON,
   to make the bot work offline and in CI.
 • Works through OpenAI ChatCompletion (or compatible proxy) asynchronously.
+
+Note: This module now uses the optimized combined OCR+Parsing module internally
+when possible.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import random
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from app.config import settings
+from app.routers.gpt_combined import ocr_and_parse
 
 logger = structlog.get_logger()
 
@@ -42,15 +46,33 @@ _MOCK_RESULT: dict[str, object] = {
 # --------------------------------------------------------------------------- #
 #  PUBLIC API
 # --------------------------------------------------------------------------- #
-async def parse(raw_text: str) -> dict[str, object]:
-    """Returns a structured JSON dictionary or mock data."""
+async def parse(raw_text: str, file_id: str = None, bot = None) -> dict[str, object]:
+    """
+    Returns a structured JSON dictionary or mock data.
+    
+    If file_id and bot are provided, uses the optimized combined OCR+Parsing.
+    Otherwise, performs only parsing on the provided raw_text.
+    """
     logger.info("Start parsing", snippet=raw_text[:80])
 
     # ── offline / CI mode ─────────────────────────────────────────────────
     if not settings.gpt_parsing_url:
         logger.warning("gpt_parsing_url not set – return mock result")
         return dict(_MOCK_RESULT)
-
+    
+    # If file_id and bot are provided, use the combined OCR+Parsing
+    if file_id and bot:
+        try:
+            # Get both raw text and parsed data in one call
+            _, parsed_data = await ocr_and_parse(file_id, bot)
+            logger.info("Combined OCR+Parsing successful", 
+                       positions=len(parsed_data.get("positions", [])))
+            return parsed_data
+        except Exception as e:
+            logger.error("Combined OCR+Parsing failed, fallback to parsing-only", error=str(e))
+            # Fallback to parsing-only if combined fails
+    
+    # Standard parsing-only path
     try:
         # Call OpenAI with retry logic
         parsed = await call_openai_with_retry(raw_text)
