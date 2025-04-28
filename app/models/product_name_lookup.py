@@ -1,33 +1,29 @@
-# app/models/product_name_lookup.py
-"""
-Таблица альтернативных (ранее встречавшихся) имён товара.
-Используется fuzzy-поиском для повышения точности распознавания.
-"""
-
 from __future__ import annotations
 
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
 
-class ProductNameLookup(Base):
-    __tablename__ = "product_name_lookups"
+class InvoiceNameLookup(Base):
+    """
+    Таблица «синонимов» — какое имя встретилось в накладной
+    и к какому Product мы его привязали вручную.
+    """
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    __tablename__ = "invoice_name_lookup"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    raw_name: Mapped[str] = mapped_column(String(255), index=True, unique=True)
 
     product_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("products.id"), nullable=False
-    )
-    product: Mapped["Product"] = relationship(
-        "Product", back_populates="name_lookups"
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
 
+    # --- relationships -------------------------------------------------
+    product: Mapped["Product"] = relationship(back_populates="name_lookups")
+
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"<ProductNameLookup id={self.id} name={self.name!r} "
-            f"confidence={self.confidence:.2f}>"
-        )
+        return f"<Lookup «{self.raw_name}» → {self.product_id}>"
