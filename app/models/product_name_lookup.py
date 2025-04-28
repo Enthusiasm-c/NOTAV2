@@ -17,7 +17,7 @@ from .invoice import Invoice
 from .product import Product
 
 
-class InvoiceNameLookup(Base, IntPK):
+class ProductNameLookup(Base, IntPK):
     __tablename__ = "invoice_name_lookup"
 
     invoice_id: Mapped[int] = mapped_column(
