@@ -11,7 +11,7 @@ class Product(Base):
 
     __tablename__ = "products"
 
-    id: Mapped[int] = int_pk
+    id: Mapped[IntPK]
     code: Mapped[str | None] = mapped_column(String(32), unique=True)  # внутренний артикул
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     unit: Mapped[str] = mapped_column(String(16))  # кг, л, шт …
