@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-from sqlalchemy import Numeric, ForeignKey
+from decimal import Decimal
+
+from sqlalchemy import ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, IntPK
 
 
-class InvoiceItem(Base):
+class InvoiceItem(Base, IntPK):
     __tablename__ = "invoice_items"
 
-    id: Mapped[IntPK]                    # type: ignore[valid-type]
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"))
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
 
-    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), index=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    unit: Mapped[str] = mapped_column(String(16))
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    sum: Mapped[Decimal] = mapped_column(Numeric(14, 2))
 
-    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="items")
-    product: Mapped["Product"] = relationship("Product", back_populates="items")
-
-    quantity: Mapped[float] = mapped_column(Numeric(12, 3))
-    price: Mapped[float] = mapped_column(Numeric(14, 2))
-    sum: Mapped[float] = mapped_column(Numeric(14, 2))
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"<InvoiceItem {self.id}: {self.quantity} × {self.product_id}>"
+    # отношения
+    invoice: Mapped["Invoice"] = relationship(back_populates="items")
+    product: Mapped["Product"] = relationship(back_populates="invoice_items")
