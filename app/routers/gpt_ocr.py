@@ -1,54 +1,59 @@
 # app/routers/gpt_ocr.py
 """
-OCR-модуль Nota V2.
+OCR-модуль Nota V2
+──────────────────
+* Загружает фото из Telegram.
+* Отправляет base64-картинку в OpenAI Vision (gpt-4o-mini по-умолчанию).
+* Возвращает raw-text или возбуждает исключение — чтобы бот показал
+  понятную ошибку, а не «заглушку».
 
-* При наличии OPENAI_API_KEY и корректного GPT_OCR_URL
-  отправляет фото накладной в Vision GPT (Chat Completion с image_url)
-  и возвращает raw-text.
-* Если ключа или URL нет, либо возникает любая сетевая ошибка,
-  возвращает заглушку, чтобы бот продолжал работать.
+Ифы-фоллбэки «вернуть stub» убраны: теперь при любой сетевой / JSON-ошибке
+вы увидите stack-trace в journalctl.
 
-Логи:
-  • DEBUG — детали запроса (есть ли ключ, какой URL);
-  • INFO   — удачное завершение (`OCR done snippet=…`);
-  • ERROR  — стек-трейс при любой ошибке.
+Требует:
+    OPENAI_API_KEY          — обязательный
+    GPT_OCR_URL             — по-умолчанию https://api.openai.com/v1/chat/completions
 """
 
 from __future__ import annotations
 
 import base64
-import structlog
 import httpx
+import structlog
 from aiogram import Bot
+from aiogram.types import File
 
 from app.config import settings
 
 logger = structlog.get_logger()
 
 
-async def ocr(file_id: str, bot: Bot) -> str:
-    """Скачивает фото из Telegram и отправляет в Vision-GPT."""
-    logger.info("Starting OCR", file_id=file_id)
-
-    # ── DEBUG: показываем, что бот «видит» из .env ─────────────────────
-    logger.debug("OCR key present: %s", bool(settings.openai_api_key))
-    logger.debug("OCR url        : %s", settings.gpt_ocr_url)
-
-    # 1. скачать файл из Telegram
-    tg_file = await bot.get_file(file_id)
+async def _tg_download(bot: Bot, file_id: str) -> bytes:
+    """Скачиваем файл из Telegram, возвращаем bytes."""
+    tg_file: File = await bot.get_file(file_id)
     async with bot.download_file(tg_file.file_path) as stream:
-        image_bytes = await stream.read()
+        return await stream.read()
 
-    # 2. если нет ключа — вернуть stub
+
+async def ocr(file_id: str, bot: Bot) -> str:
+    """
+    Основной вызов: telegram-file-id → raw text.
+
+    Исключения не «глотаются» — пусть всплывают до хендлера,
+    чтобы их логировал и Telegram-бот, и systemd-journal.
+    """
     if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY missing, returning stub text")
-        return "stub: supplier ООО Ромашка ... positions 1 шт"
+        raise RuntimeError("OPENAI_API_KEY не задан — OCR невозможен")
 
-    # 3. сформировать payload Vision-GPT
+    logger.info("OCR start", file_id=file_id)
+    image_bytes = await _tg_download(bot, file_id)
+
     b64img = base64.b64encode(image_bytes).decode()
     payload = {
         "model": "gpt-4o-mini",
         "temperature": 0,
+        "max_tokens": 4096,
+        # response_format — просим только текст
         "messages": [
             {
                 "role": "user",
@@ -56,34 +61,46 @@ async def ocr(file_id: str, bot: Bot) -> str:
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{b64img}"},
-                    }
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Сделай OCR. Верни чистый текст без комментариев, "
+                            "языка разметки или JSON."
+                        ),
+                    },
                 ],
             }
         ],
     }
+
     headers = {
         "Authorization": f"Bearer {settings.openai_api_key}",
         "Content-Type": "application/json",
     }
 
-    # 4. запрос к OpenAI / прокси
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
-            r.raise_for_status()
-
-        raw_text = (
-            r.json()
-            .get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
+            resp = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as err:
+        logger.error(
+            "OCR HTTP error",
+            status=err.response.status_code,
+            body=err.response.text[:300],
         )
+        raise
+    except Exception as exc:
+        logger.exception("OCR transport error", exc_info=exc)
+        raise
 
-        logger.info("OCR done", snippet=raw_text[:120])
-        return raw_text
+    try:
+        raw_text = (
+            resp.json()["choices"][0]["message"]["content"].strip()
+        )
+    except (KeyError, ValueError) as exc:
+        logger.error("OCR JSON structure unexpected", body=resp.text[:400])
+        raise RuntimeError("OpenAI вернул некорректный ответ") from exc
 
-    # 5. любая ошибка → лог + stub
-    except Exception:
-        logger.exception("OCR failed")        # полный стек-трейс
-        return "stub: supplier ООО Ромашка ... positions 1 шт"
+    logger.info("OCR done", snippet=raw_text[:120])
+    return raw_text
