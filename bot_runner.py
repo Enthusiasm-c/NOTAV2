@@ -18,20 +18,25 @@ bot_runner.py
 
 import asyncio
 import logging
+import sys
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from app.config import settings
 from app.routers.telegram_bot import router  # router содержит все хендлеры
 
 # ───────────────────────  Логирование  ──────────────────────────
 #
-# INFO-уровень показывает старт/стоп polling’а и любые
-# сообщения logger-ов aiogram’а.  DEBUG можно включить, задав
+# INFO-уровень показывает старт/стоп polling'а и любые
+# сообщения logger-ов aiogram'а.  DEBUG можно включить, задав
 # переменную среды LOG_LEVEL=DEBUG.
 #
-log_level = logging.getLevelName(
-    (getattr(settings, "log_level", None) or "INFO").upper()
-)
+try:
+    log_level_name = settings.log_level if hasattr(settings, "log_level") else "INFO"
+    log_level = logging.getLevelName(log_level_name.upper())
+except (AttributeError, ValueError):
+    log_level = logging.INFO
+
 logging.basicConfig(
     level=log_level,  # INFO по умолчанию
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -43,12 +48,28 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     """Запускает polling-loop aiogram."""
+    # Выведем диагностику для отладки
+    logger.info(f"Python версия: {sys.version}")
+    logger.info(f"Telegram token: {settings.telegram_token[:5]}...")
+    logger.info(f"Log level: {log_level}")
+    
+    # Инициализация бота и диспетчера
     bot = Bot(token=settings.telegram_token)
-    dp = Dispatcher()
+    storage = MemoryStorage()  # Хранилище для FSM
+    dp = Dispatcher(storage=storage)
     dp.include_router(router)
 
+    # Очистка вебхука перед запуском long polling
+    logger.info("Очистка вебхука...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    
     logger.info("🚀 Nota V2 bot starting polling…")
-    await dp.start_polling(bot, allowed_updates=[])   # пустой список = все стандартные
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        # Закрываем сессию бота при выходе
+        await bot.session.close()
+    
     logger.info("✅ Polling finished (graceful shutdown)")
 
 
@@ -57,3 +78,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("🛑 Bot stopped by user interrupt")
+    except Exception as e:
+        logger.exception(f"❌ Необработанное исключение: {e}")
+        sys.exit(1)
