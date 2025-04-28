@@ -1,96 +1,78 @@
-#!/usr/bin/env python
 """
-Alembic environment — используется при создании / выполнении миграций.
-
-* SQLAlchemy 2.0 style
-* Асинхронный движок (asyncpg, aiosqlite и т. д.)
+Alembic environment for Nota V2
+───────────────────────────────
+* Добавляет корень проекта (/opt/notav2) в sys.path
+* Импортирует ВСЕ модели, чтобы autogenerate видел таблицы
 """
 
 from __future__ import annotations
 
 import asyncio
-from logging.config import fileConfig
+import logging.config
+import sys
 from pathlib import Path
-from types import ModuleType
-from typing import Sequence
+from typing import AsyncGenerator
 
 from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncEngine, async_engine_from_config
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# ─────────────────────────── Приложение ──────────────────────────────
-# База и настройки подтягиваются **до** конфигурации Alembic
-import app.models  # noqa: F401  ← гарантирует импорт всех моделей
-from app.config import settings
-from app.models.base import Base  # Base.metadata → target_metadata
+# ── PYTHONPATH ──────────────────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent.parent  # /opt/notav2
+if str(BASE_DIR) not in sys.path:
+    sys.path.append(str(BASE_DIR))
 
-# ─────────────────────────── Логи / env vars ─────────────────────────
+# теперь можно импортировать настройки и модели
+from app.config import settings  # noqa: E402
+import app.models  # noqa: F401,E402  ← ВАЖНО: импортирует всё
+
+# ── Alembic config ──────────────────────────────────────────────────────
 config = context.config
-if config.config_file_name is not None:  # alembic.ini
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
-
-# Устанавливаем URL БД динамически, чтобы одинаково работал dev / CI / prod
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
-target_metadata = Base.metadata
+# Optional: включите логирование Alembic
+logging.config.fileConfig(config.config_file_name)
 
-# ─────────────────────────── OFFLINE MODE ────────────────────────────
+target_metadata = app.models.Base.metadata  # noqa: E402
+
+
+# ── Runners ─────────────────────────────────────────────────────────────
 def run_migrations_offline() -> None:
-    """Генерация SQL без подключения к БД (alembic upgrade --sql)."""
-    url: str = config.get_main_option("sqlalchemy.url")  # уже патчнули выше
+    """CLI-режим – генерируем SQL без подключения к БД."""
     context.configure(
-        url=url,
+        url=settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True,          # фиксируем изменения типов
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
 
-# ─────────────────────────── ONLINE MODE ─────────────────────────────
-def _include_object(
-    obj: object,
-    name: str | None,
-    type_: str,
-    reflected: bool,
-    compare_to: object | None,
-) -> bool:
-    """
-    Доп. фильтр, если нужно исключить таблицы; сейчас пропускаем всё.
-    """
-    return True
-
-
 async def run_migrations_online() -> None:
-    """Настраивает AsyncEngine и запускает миграции."""
-    connectable: AsyncEngine = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+    """Основной режим – подключения к БД и выполнение миграций."""
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section),  # type: ignore[arg-type]
         prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
         future=True,
+        pool_pre_ping=True,
     )
 
-    async with connectable.connect() as connection:  # type: Connection
+    async with connectable.connect() as connection:
         await connection.run_sync(
-            lambda sync_conn: context.configure(  # noqa: E731
-                connection=sync_conn,
+            lambda conn: context.configure(
+                connection=conn,
                 target_metadata=target_metadata,
                 compare_type=True,
-                include_object=_include_object,
+                compare_server_default=True,
             )
         )
 
-        async with connection.begin():
+        async with context.begin_transaction():
             await connection.run_sync(context.run_migrations)
 
     await connectable.dispose()
 
 
-# ─────────────────────────── entry-point ─────────────────────────────
 if context.is_offline_mode():
     run_migrations_offline()
 else:
