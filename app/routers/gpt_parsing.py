@@ -6,9 +6,6 @@ Invoice-parser for Nota V2.
 • If the GPT_PARSING_URL environment variable is empty — returns mock-JSON,
   to make the bot work offline and in CI.
 • Works through OpenAI ChatCompletion (or compatible proxy) asynchronously.
-
-Note: This module now uses the optimized combined OCR+Parsing module internally
-when possible.
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ import random
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from app.config import settings
-from app.routers.gpt_combined import ocr_and_parse
 
 logger = structlog.get_logger()
 
@@ -63,6 +59,8 @@ async def parse(raw_text: str, file_id: str = None, bot = None) -> dict[str, obj
     # If file_id and bot are provided, use the combined OCR+Parsing
     if file_id and bot:
         try:
+            # Импортируем здесь, чтобы избежать циклической зависимости
+            from app.routers.gpt_combined import ocr_and_parse
             # Get both raw text and parsed data in one call
             _, parsed_data = await ocr_and_parse(file_id, bot)
             logger.info("Combined OCR+Parsing successful", 
