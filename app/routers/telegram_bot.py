@@ -1,6 +1,6 @@
 """
 Telegram router (Aiogram v3) - Receipt processing pipeline:
-    photo ➜ OCR ➜ Parsing ➜ Fuzzy ➜ confirmation ➜ Syrve
+    photo ➜ OCR+Parsing ➜ Fuzzy ➜ confirmation ➜ Syrve
 MVP version: if any step fails - we send a clear message.
 """
 
@@ -15,8 +15,12 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
+# Импортируем новый объединенный модуль вместо отдельных
+from app.routers.gpt_combined import ocr_and_parse
+# Оставляем старые модули для обратной совместимости
 from app.routers.gpt_ocr import ocr
 from app.routers.gpt_parsing import parse
+
 from app.routers.fuzzy_match import fuzzy_match_product
 from app.utils.unit_converter import normalize_unit, is_compatible_unit
 from app.utils.xml_generator import build_xml
@@ -31,16 +35,16 @@ router = Router(name=__name__)
 async def _run_pipeline(file_id: str, bot: Bot) -> dict:
     """Photo in Telegram → structured dict (OCR+Parsing)."""
     try:
-        raw_text = await ocr(file_id, bot)
-        logger.info("OCR completed successfully", text_length=len(raw_text))
+        # Используем оптимизированный объединенный вызов API
+        raw_text, parsed_data = await ocr_and_parse(file_id, bot)
         
-        parsed = await parse(raw_text)
-        logger.info("Parsing completed successfully", 
-                   positions_count=len(parsed.get("positions", [])))
+        logger.info("OCR+Parsing completed successfully", 
+                   text_length=len(raw_text),
+                   positions_count=len(parsed_data.get("positions", [])))
         
-        return parsed
-    except Exception as e:
-        logger.exception("Pipeline failed", error=str(e))
+        return parsed_data
+    except Exception as exc:
+        logger.exception("Pipeline failed", exc_info=exc)
         raise
 
 
@@ -230,6 +234,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
     file_id = m.photo[-1].file_id  # get largest resolution photo
 
     try:
+        # Используем оптимизированный пайплайн
         data = await _run_pipeline(file_id, bot)
     except Exception as exc:
         logger.exception("Pipeline failed", exc_info=exc)
