@@ -1,18 +1,18 @@
 """
-Базовый класс моделей + полезные алиасы
----------------------------------------
-* Единая metadata с naming-convention
-* Готовый `int_pk` для простого авто-PK
+Базовый класс моделей + алиас первичного ключа
+----------------------------------------------
+Теперь alias создаёт **новый** Column для каждой модели ─
+никаких «дубликатов id» больше не будет.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, TypeAlias
 
 from sqlalchemy import Integer, MetaData
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# ――― naming-convention для корректных Alembic-diffʼов ―――――――――――――――――
+# единый naming-convention (Alembic diff-ы)
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
@@ -26,7 +26,8 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-# ――― Алиасы, чтобы не повторять одно и то же в моделях ――――――――――――――――
-int_pk: Annotated[Mapped[int], mapped_column(Integer, primary_key=True, autoincrement=True)] = mapped_column(  # type: ignore[assignment]
-    Integer, primary_key=True, autoincrement=True
-)
+# ── 💡 TypeAlias, а НЕ готовый Column! ─────────────────────────────────────────
+IntPK: TypeAlias = Annotated[
+    int,
+    mapped_column(Integer, primary_key=True, autoincrement=True),
+]
