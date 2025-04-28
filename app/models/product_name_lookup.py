@@ -1,9 +1,3 @@
-# app/models/product_name_lookup.py
-"""
-Таблица с «псевдонимами» товаров:
-* «яблоко», «apple», «apel» → product_id = 42
-"""
-
 from __future__ import annotations
 
 from sqlalchemy import ForeignKey, String
@@ -13,16 +7,26 @@ from .base import Base, int_pk
 
 
 class ProductNameLookup(Base):
-    """Уникальная пара (product_id, alias)."""
+    """
+    Таблица с псевдонимами (синонимами) товаров ―
+    используется для «мягкого» сопоставления названий из накладных.
+    """
 
     __tablename__ = "product_name_lookup"
 
-    id: Mapped[int] = int_pk()
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
-    alias: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    id: Mapped[int] = int_pk
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"),
+        index=True,
+    )
+    alias: Mapped[str] = mapped_column(String(128), index=True)
 
-    # back-reference в Product.name_lookups
-    product: Mapped["Product"] = relationship(back_populates="name_lookups")
+    # связь к Product
+    product: Mapped["Product"] = relationship(
+        "Product",
+        back_populates="name_lookups",
+        lazy="joined",
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Lookup {self.alias!r} → {self.product_id}>"
