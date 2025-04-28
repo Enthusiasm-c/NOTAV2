@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from typing import Tuple, Optional
+import logging
 
 from rapidfuzz import fuzz, process
 from sqlalchemy import select
@@ -26,6 +27,7 @@ from app.config import settings
 from app.models.product_name_lookup import ProductNameLookup
 from app.models.product import Product
 
+logger = logging.getLogger(__name__)
 
 async def fuzzy_match_product(
     session: AsyncSession,
@@ -40,36 +42,65 @@ async def fuzzy_match_product(
     :param threshold: кастомный порог RapidFuzz (0–1); если None → settings
     :return: (product_id | None, confidence 0–1)
     """
-
-    threshold = threshold or settings.fuzzy_threshold
-
-    # ───────────────────────── 1. lookup по памяти ────────────────────────
-    res = await session.execute(
-        select(ProductNameLookup.product_id).where(
-            ProductNameLookup.alias == parsed_name
-        )
-    )
-    product_id = res.scalar_one_or_none()
-    if product_id is not None:
-        return product_id, 1.0
-
-    # ──────────────────────── 2. RapidFuzz по каталогу ────────────────────
-    rows = await session.execute(select(Product.id, Product.name))
-    candidates = list(rows)  # [(id, name), …]
-
-    if not candidates:  # пустой каталог
+    if not parsed_name or not parsed_name.strip():
+        logger.warning("Empty name provided for fuzzy matching")
         return None, 0.0
 
-    names = [name for _, name in candidates]
-    match = process.extractOne(parsed_name, names, scorer=fuzz.ratio)
+    threshold = threshold or settings.fuzzy_threshold
+    logger.debug(f"Fuzzy matching: {parsed_name!r} with threshold {threshold}")
 
-    if match:
-        matched_name, score_raw = match  # score_raw 0–100
-        confidence = score_raw / 100.0
-        if confidence >= threshold:
-            # Находим product_id по имени
-            product_id = next(pid for pid, name in candidates if name == matched_name)
-            return product_id, confidence
+    # ───────────────────────── 1. lookup по памяти ────────────────────────
+    try:
+        res = await session.execute(
+            select(ProductNameLookup.product_id).where(
+                ProductNameLookup.alias == parsed_name
+            )
+        )
+        product_id = res.scalar_one_or_none()
+        if product_id is not None:
+            logger.info(f"Exact match found for {parsed_name!r}: {product_id}")
+            return product_id, 1.0
+    except Exception as e:
+        logger.error(f"Error in lookup query: {e}")
+        # Продолжаем выполнение с fallback на fuzzy-matching
+
+    # ──────────────────────── 2. RapidFuzz по каталогу ────────────────────
+    try:
+        rows = await session.execute(select(Product.id, Product.name))
+        candidates = list(rows)  # [(id, name), …]
+
+        if not candidates:  # пустой каталог
+            logger.warning("Empty product catalog for fuzzy matching")
+            return None, 0.0
+
+        names = [name for _, name in candidates]
+        logger.debug(f"Searching among {len(names)} product names")
+        
+        match = process.extractOne(parsed_name, names, scorer=fuzz.ratio)
+
+        if match:
+            try:
+                # Обрабатываем результат extractOne, который может возвращать 
+                # разное количество значений (2 или 3)
+                if len(match) >= 3:
+                    matched_name, score_raw, _ = match  # score_raw 0–100, _ это индекс
+                else:
+                    matched_name, score_raw = match  # score_raw 0–100
+                
+                confidence = score_raw / 100.0
+                logger.debug(f"Best match: {matched_name!r} with confidence {confidence:.2f}")
+                
+                if confidence >= threshold:
+                    # Находим product_id по имени
+                    for pid, name in candidates:
+                        if name == matched_name:
+                            logger.info(f"Fuzzy match found for {parsed_name!r}: {pid} with confidence {confidence:.2f}")
+                            return pid, confidence
+            except Exception as e:
+                logger.error(f"Error processing match result: {e}")
+    except Exception as e:
+        logger.error(f"Error in fuzzy matching: {e}")
 
     # ничего не подошло с нужным порогом
+    logger.info(f"No match found for {parsed_name!r}")
     return None, 0.0
