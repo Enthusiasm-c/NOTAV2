@@ -27,7 +27,31 @@ from aiogram.types import (
     InlineKeyboardMarkup, 
     InlineKeyboardButton
 )
-from aiogram.filters import Text
+
+# Адаптивный импорт Text для разных версий aiogram
+try:
+    # aiogram 3.x.x
+    from aiogram.filters import Text
+except ImportError:
+    try:
+        # aiogram 3.x альтернативное расположение
+        from aiogram.filters.text import Text
+    except ImportError:
+        # Если не найдено - создаем свою реализацию
+        class Text:
+            """Совместимая реализация фильтра Text."""
+            def __init__(self, text=None):
+                self.text = text if isinstance(text, list) else [text] if text else None
+            
+            def __call__(self, message):
+                if hasattr(message, 'text'):
+                    # Для текстовых сообщений
+                    return self.text is None or message.text in self.text
+                elif hasattr(message, 'data'):
+                    # Для callback_query
+                    return self.text is None or message.data in self.text
+                return False
+
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -38,7 +62,93 @@ from app.db import SessionLocal
 from app.models.product import Product
 from app.models.invoice import Invoice
 from app.models.invoice_item import InvoiceItem
-from app.utils.unit_converter import normalize_unit, is_compatible_unit, convert
+
+# Адаптивный импорт функций unit_converter
+try:
+    from app.utils.unit_converter import normalize_unit, is_compatible_unit, convert
+except ImportError:
+    # Встроенная версия функций, если модуль недоступен
+    def normalize_unit(unit_str: str) -> str:
+        """Нормализация единиц измерения."""
+        if not unit_str:
+            return ""
+        
+        # Словарь алиасов единиц измерения
+        UNIT_ALIASES = {
+            # Объем
+            "l": "l", "ltr": "l", "liter": "l", "liters": "l",
+            "ml": "ml", "milliliter": "ml", "milliliters": "ml",
+            
+            # Вес
+            "kg": "kg", "kilo": "kg", "kilogram": "kg",
+            "g": "g", "gr": "g", "gram": "g", "grams": "g",
+            
+            # Штучные
+            "pcs": "pcs", "pc": "pcs", "piece": "pcs", "pieces": "pcs",
+            "pack": "pack", "package": "pack", "pkg": "pack",
+            "box": "box", "boxes": "box",
+            
+            # Индонезийские алиасы
+            "liter": "l", "lt": "l",
+            "mililiter": "ml", "mili": "ml",
+            "kilogram": "kg", "kilo": "kg",
+            "gram": "g",
+            "buah": "pcs", "biji": "pcs", "pcs": "pcs", "potong": "pcs",
+            "paket": "pack", "pak": "pack",
+            "kotak": "box", "dus": "box", "kardus": "box",
+        }
+        
+        unit_str = unit_str.lower().strip()
+        return UNIT_ALIASES.get(unit_str, unit_str)
+    
+    def is_compatible_unit(unit1: str, unit2: str) -> bool:
+        """Проверка совместимости единиц измерения."""
+        unit1 = normalize_unit(unit1)
+        unit2 = normalize_unit(unit2)
+        
+        # Одинаковые единицы всегда совместимы
+        if unit1 == unit2:
+            return True
+        
+        # Проверка категорий
+        volume_units = {"l", "ml"}
+        weight_units = {"kg", "g"}
+        countable_units = {"pcs", "pack", "box"}
+        
+        if unit1 in volume_units and unit2 in volume_units:
+            return True
+        if unit1 in weight_units and unit2 in weight_units:
+            return True
+        if unit1 in countable_units and unit2 in countable_units:
+            return False  # Штучные единицы обычно несовместимы без доп. знаний
+        
+        return False
+    
+    def convert(value: float, from_unit: str, to_unit: str) -> Optional[float]:
+        """Конвертация между единицами измерения."""
+        from_unit = normalize_unit(from_unit)
+        to_unit = normalize_unit(to_unit)
+        
+        # Если единицы одинаковые
+        if from_unit == to_unit:
+            return value
+        
+        # Коэффициенты конвертации
+        conversion_factors = {
+            ("ml", "l"): 0.001,
+            ("l", "ml"): 1000,
+            ("g", "kg"): 0.001,
+            ("kg", "g"): 1000,
+        }
+        
+        # Поиск коэффициента
+        factor = conversion_factors.get((from_unit, to_unit))
+        if factor is not None:
+            return value * factor
+        
+        # Нет конвертации
+        return None
+
 from app.config import settings
 
 logger = structlog.get_logger()
