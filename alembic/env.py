@@ -1,73 +1,96 @@
-# alembic/env.py
+#!/usr/bin/env python
 """
-Async Alembic environment for Nota V2
-──────────────────────────────────────
-* SQLAlchemy 2.0 + asyncpg
-* target_metadata = Base.metadata
+Alembic environment — используется при создании / выполнении миграций.
+
+* SQLAlchemy 2.0 style
+* Асинхронный движок (asyncpg, aiosqlite и т. д.)
 """
 
 from __future__ import annotations
 
 import asyncio
-import sys
+from logging.config import fileConfig
 from pathlib import Path
-
-# ── добавить корень проекта в PYTHONPATH ───────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parents[1]  # /opt/notav2
-sys.path.append(str(PROJECT_ROOT))
+from types import ModuleType
+from typing import Sequence
 
 from alembic import context
 from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import (
-    AsyncConnection,
-    AsyncEngine,
-    async_engine_from_config,
-)
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import AsyncEngine, async_engine_from_config
 
-from app.models.base import Base  # noqa: E402
+# ─────────────────────────── Приложение ──────────────────────────────
+# База и настройки подтягиваются **до** конфигурации Alembic
+import app.models  # noqa: F401  ← гарантирует импорт всех моделей
+from app.config import settings
+from app.models.base import Base  # Base.metadata → target_metadata
+
+# ─────────────────────────── Логи / env vars ─────────────────────────
+config = context.config
+if config.config_file_name is not None:  # alembic.ini
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
+
+# Устанавливаем URL БД динамически, чтобы одинаково работал dev / CI / prod
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 target_metadata = Base.metadata
-config = context.config
+
+# ─────────────────────────── OFFLINE MODE ────────────────────────────
+def run_migrations_offline() -> None:
+    """Генерация SQL без подключения к БД (alembic upgrade --sql)."""
+    url: str = config.get_main_option("sqlalchemy.url")  # уже патчнули выше
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        compare_type=True,          # фиксируем изменения типов
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
 
 
-# ────────────────────────── engine factory ─────────────────────────────
-def get_async_engine() -> AsyncEngine:
-    return async_engine_from_config(
+# ─────────────────────────── ONLINE MODE ─────────────────────────────
+def _include_object(
+    obj: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: object | None,
+) -> bool:
+    """
+    Доп. фильтр, если нужно исключить таблицы; сейчас пропускаем всё.
+    """
+    return True
+
+
+async def run_migrations_online() -> None:
+    """Настраивает AsyncEngine и запускает миграции."""
+    connectable: AsyncEngine = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
         future=True,
     )
 
+    async with connectable.connect() as connection:  # type: Connection
+        await connection.run_sync(
+            lambda sync_conn: context.configure(  # noqa: E731
+                connection=sync_conn,
+                target_metadata=target_metadata,
+                compare_type=True,
+                include_object=_include_object,
+            )
+        )
 
-# ────────────────────────── offline mode ───────────────────────────────
-def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
-    with context.begin_transaction():
-        context.run_migrations()
+        async with connection.begin():
+            await connection.run_sync(context.run_migrations)
 
-
-# ────────────────────────── online mode ────────────────────────────────
-def do_run_migrations(connection):  # sync-функция!
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_migrations_online() -> None:
-    connectable = get_async_engine()
-    async with connectable.connect() as conn:
-        await conn.run_sync(do_run_migrations)
     await connectable.dispose()
 
 
-# ────────────────────────── entrypoint ─────────────────────────────────
+# ─────────────────────────── entry-point ─────────────────────────────
 if context.is_offline_mode():
     run_migrations_offline()
 else:
