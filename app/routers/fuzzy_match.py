@@ -1,9 +1,8 @@
-# app/routers/fuzzy_match.py
 """
 Поиск товара по не-чёткому названию.
 
 Алгоритм:
-1. Сначала пытаемся найти точное соответствие в таблице `invoice_name_lookup`
+1. Сначала пытаемся найти точное соответствие в таблице `product_name_lookup`
    (ранее подтверждённая пара «распознанное название → product_id»).
    Если нашли — возвращаем (product_id, 1.0).
 
@@ -24,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.invoice_name_lookup import InvoiceNameLookup
+from app.models.product_name_lookup import ProductNameLookup
 from app.models.product import Product
 
 
@@ -46,8 +45,8 @@ async def fuzzy_match_product(
 
     # ───────────────────────── 1. lookup по памяти ────────────────────────
     res = await session.execute(
-        select(InvoiceNameLookup.product_id).where(
-            InvoiceNameLookup.parsed_name == parsed_name
+        select(ProductNameLookup.product_id).where(
+            ProductNameLookup.alias == parsed_name
         )
     )
     product_id = res.scalar_one_or_none()
