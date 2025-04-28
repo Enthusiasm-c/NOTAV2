@@ -1,28 +1,26 @@
 """
-app.models package
-──────────────────
-• Сводит воедино все модели и экспортирует их в __all__,  
-  чтобы удобнее было писать «короткие» импорты вида  
-  `from app.models import Product`.
-• Никакой исполняемой логики здесь нет – только импорт.
+app package init
+────────────────
+* Делает «короткие» импорты:   `from app import Product`
+* Экспортирует Base и все основные модели.
+* Не выполняет лишнего кода при импорте (важно для тестов/Alembic).
 """
 
 from __future__ import annotations
 
-# Настройки (могут понадобиться при инициализации других модулей)
-from app.config import settings  # noqa: F401  (оставляем для совместимости)
+# ── настройки приложения ──────────────────────────────────────────────────────
+from .config import settings  # noqa: F401
 
-# Базовый класс declarative-моделей
-from .base import Base  # noqa: F401
-
-# Сами модели
-from .supplier import Supplier  # noqa: F401
-from .product import Product  # noqa: F401
-from .product_name_lookup import ProductNameLookup  # noqa: F401
-from .invoice import Invoice  # noqa: F401
-from .invoice_item import InvoiceItem  # noqa: F401
+# ── модели и базовый класс ────────────────────────────────────────────────────
+from .models.base import Base  # noqa: F401
+from .models.supplier import Supplier  # noqa: F401
+from .models.product import Product  # noqa: F401
+from .models.product_name_lookup import ProductNameLookup  # noqa: F401
+from .models.invoice import Invoice  # noqa: F401
+from .models.invoice_item import InvoiceItem  # noqa: F401
 
 __all__: list[str] = [
+    "settings",
     "Base",
     "Supplier",
     "Product",
