@@ -9,10 +9,10 @@ Supported conversions:
 This module supports aliases in both English and Indonesian.
 """
 
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 
 # Unit normalization dictionary
-UNIT_ALIASES = {
+UNIT_ALIASES: Dict[str, str] = {
     # English volume units
     "l": "l", "ltr": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l",
     "ml": "ml", "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
@@ -45,7 +45,7 @@ UNIT_ALIASES = {
 }
 
 # Conversion factors between units
-CONVERSION_FACTORS = {
+CONVERSION_FACTORS: Dict[Tuple[str, str], float] = {
     ("ml", "l"): 0.001,
     ("l", "ml"): 1000,
     ("g", "kg"): 0.001,
