@@ -9,31 +9,25 @@ from .base import Base, IntPK
 
 
 class Product(Base, IntPK):
-    """Товар из номенклатуры"""
-
     __tablename__ = "products"
 
-    # основной «человеческий» заголовок
-    name: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    # «человеческое» имя
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
 
-    # базовая единица учёта (кг, л, pack …)
-    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    # единица учёта (kg, l, pcs …)
+    unit: Mapped[str] = mapped_column(String(16))
 
-    # справочная цена (может быть NULL, если не нужна)
+    # базовая цена (может быть null)
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
 
-    # ─── связи ───────────────────────────────────────────────────────────────────
-    name_lookups: Mapped[list["ProductNameLookup"]] = relationship(
-        "ProductNameLookup",
+    # связанные таблицы
+    items: Mapped[list["InvoiceItem"]] = relationship(back_populates="product")
+    name_lookups: Mapped[list["InvoiceNameLookup"]] = relationship(
+        "InvoiceNameLookup",
         back_populates="product",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
-    invoice_items: Mapped[list["InvoiceItem"]] = relationship(
-        "InvoiceItem",
-        back_populates="product",
-    )
-
-    # ─── сервисное ───────────────────────────────────────────────────────────────
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<Product {self.id}: {self.name!r}>"
+        return f"<Product {self.id}: {self.name}>"
