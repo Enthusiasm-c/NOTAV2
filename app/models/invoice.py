@@ -1,30 +1,38 @@
+# app/models/invoice.py
+"""
+Накладная (Invoice)
+───────────────────
+* один-ко-многим с InvoiceItem
+"""
+
 from __future__ import annotations
 
 from datetime import date
-
-from sqlalchemy import Column, Date, Integer, String, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, Date, String
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from .base import Base
 
 
 class Invoice(Base):
-    """Покупатель ⇄ Поставщик + список строк (InvoiceItem)."""
-
     __tablename__ = "invoices"
 
-    id: int = Column(Integer, primary_key=True, autoincrement=True)
-    supplier_name: str | None = Column(String, nullable=True)
-    buyer_name: str | None = Column(String, nullable=True)
-    date: date | None = Column(Date, default=date.today, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    number: Mapped[str | None] = mapped_column(String, nullable=True)
+    issued_at: Mapped[date] = mapped_column(Date, nullable=False)
 
-    raw_text: str | None = Column(Text, nullable=True)      # полный OCR-текст
-    status: str = Column(String, default="pending")         # pending / sent / error …
+    supplier: Mapped[str | None] = mapped_column(String, nullable=True)
+    buyer: Mapped[str | None] = mapped_column(String, nullable=True)
+    total_sum: Mapped[float | None] = mapped_column(nullable=True)
 
-    # ――― related objects ―――
-    items = relationship(
+    # ─────────────── связи ───────────────
+    items: Mapped[list["InvoiceItem"]] = relationship(
         "InvoiceItem",
         back_populates="invoice",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
+    # ───────────── удобство ──────────────
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Invoice id={self.id} №{self.number} {self.issued_at}>"
