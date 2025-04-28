@@ -14,7 +14,7 @@ class ProductNameLookup(Base):
 
     __tablename__ = "product_name_lookup"
 
-    id: Mapped[int] = int_pk
+    id: Mapped[IntPK]
     product_id: Mapped[int] = mapped_column(
         ForeignKey("products.id", ondelete="CASCADE"),
         index=True,
