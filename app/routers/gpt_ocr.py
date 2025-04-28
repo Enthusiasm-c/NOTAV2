@@ -12,8 +12,6 @@ you will see a stack-trace in journalctl.
 Requires:
     OPENAI_API_KEY          — mandatory
     GPT_OCR_URL             — default is https://api.openai.com/v1/chat/completions
-    
-Note: This module now uses the optimized combined OCR+Parsing module internally.
 """
 
 from __future__ import annotations
@@ -26,23 +24,9 @@ from aiogram.types import File
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from app.config import settings
-from app.routers.gpt_combined import ocr_and_parse
+from app.utils.telegram_utils import download_file
 
 logger = structlog.get_logger()
-
-
-# ───────── app/routers/gpt_ocr.py ─────────────────────────────────────────
-async def _tg_download(bot: Bot, file_id: str) -> bytes:
-    """
-    Download file from Telegram and return bytes.
-
-    aiogram-3:
-        tg_file = await bot.get_file(file_id)
-        stream  = await bot.download_file(tg_file.file_path)   # coroutine → BytesIO
-    """
-    tg_file = await bot.get_file(file_id)
-    stream  = await bot.download_file(tg_file.file_path)  # <-- await, without async with
-    return stream.read()                                  # BytesIO → bytes
 
 
 @retry(
@@ -58,10 +42,7 @@ async def _tg_download(bot: Bot, file_id: str) -> bytes:
     ),
 )
 async def _call_openai_vision(image_bytes: bytes) -> str:
-    """
-    Legacy function for direct OpenAI Vision API calls.
-    Kept for compatibility and as a fallback.
-    """
+    """Call OpenAI Vision API with retry logic for robustness against temporary failures."""
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not set – OCR is not possible")
 
@@ -116,9 +97,6 @@ async def _call_openai_vision(image_bytes: bytes) -> str:
 async def ocr(file_id: str, bot: Bot) -> str:
     """
     Main call: telegram-file-id → raw text.
-    
-    Now uses the optimized combined OCR+Parsing module internally,
-    but still returns only the raw text for compatibility.
 
     Exceptions are not "swallowed" — let them bubble up to the handler,
     so they can be logged by both the Telegram bot and systemd-journal.
@@ -129,11 +107,20 @@ async def ocr(file_id: str, bot: Bot) -> str:
     logger.info("OCR start", file_id=file_id)
     
     try:
-        # Use the combined OCR+Parsing module
-        raw_text, _ = await ocr_and_parse(file_id, bot)
-        return raw_text
-    except Exception as e:
-        logger.error("Combined OCR failed, fallback to direct OCR", error=str(e))
-        # Fallback to direct OCR if combined fails
-        image_bytes = await _tg_download(bot, file_id)
+        # Первый подход - использовать оптимизированный интерфейс
+        # Но импортируем его здесь, чтобы избежать циклической зависимости
+        # (А в случае ошибки, переключимся на прямой вызов OCR)
+        try:
+            from app.routers.gpt_combined import ocr_and_parse
+            raw_text, _ = await ocr_and_parse(file_id, bot)
+            return raw_text
+        except ImportError:
+            # Если импорт не удался, используем прямой OCR
+            pass
+            
+        # Прямой вызов OCR
+        image_bytes = await download_file(bot, file_id)
         return await _call_openai_vision(image_bytes)
+    except Exception as e:
+        logger.exception("OCR failed", error=str(e))
+        raise
