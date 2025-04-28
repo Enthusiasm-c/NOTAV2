@@ -14,10 +14,91 @@ from aiogram import Bot, Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from typing import Dict, Tuple, Optional
 
 # Импортируем модули распознавания и парсинга
 from app.routers.gpt_ocr import ocr
 from app.routers.gpt_parsing import parse
+
+# Импортируем модуль unit_converter, если он доступен
+try:
+    from app.utils.unit_converter import normalize_unit, is_compatible_unit
+    UNIT_CONVERTER_AVAILABLE = True
+except ImportError:
+    UNIT_CONVERTER_AVAILABLE = False
+    # Встроенные функции для работы с единицами измерения
+    # (копия из unit_converter для обеспечения прямой работоспособности)
+    
+    # Unit normalization dictionary
+    UNIT_ALIASES: Dict[str, str] = {
+        # English volume units
+        "l": "l", "ltr": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l",
+        "ml": "ml", "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
+        
+        # English weight units
+        "kg": "kg", "kilo": "kg", "kilogram": "kg", "kilograms": "kg",
+        "g": "g", "gr": "g", "gram": "g", "grams": "g",
+        
+        # English countable units
+        "pcs": "pcs", "pc": "pcs", "piece": "pcs", "pieces": "pcs",
+        "pack": "pack", "package": "pack", "pkg": "pack",
+        "box": "box", "boxes": "box",
+        
+        # Indonesian volume units
+        "liter": "l", "lt": "l",
+        "mililiter": "ml", "mili": "ml",
+        
+        # Indonesian weight units
+        "kilogram": "kg", "kilo": "kg",
+        "gram": "g",
+        
+        # Indonesian countable units
+        "buah": "pcs", "biji": "pcs", "pcs": "pcs", "potong": "pcs",
+        "paket": "pack", "pak": "pack",
+        "kotak": "box", "dus": "box", "kardus": "box",
+        
+        # Common abbreviations
+        "ea": "pcs",  # each
+        "btl": "pcs",  # bottle/botol
+    }
+    
+    def normalize_unit(unit_str: str) -> str:
+        """
+        Normalize unit string to standard format.
+        """
+        if not unit_str:
+            return ""
+        
+        unit_str = unit_str.lower().strip()
+        return UNIT_ALIASES.get(unit_str, unit_str)
+    
+    def is_compatible_unit(unit1: str, unit2: str) -> bool:
+        """
+        Check if two units are compatible (can be converted between each other).
+        """
+        unit1 = normalize_unit(unit1)
+        unit2 = normalize_unit(unit2)
+        
+        # Same normalized units are always compatible
+        if unit1 == unit2:
+            return True
+        
+        # Check unit categories
+        volume_units = {"l", "ml"}
+        weight_units = {"kg", "g"}
+        countable_units = {"pcs", "pack", "box"}
+        
+        if unit1 in volume_units and unit2 in volume_units:
+            return True
+        if unit1 in weight_units and unit2 in weight_units:
+            return True
+        if unit1 in countable_units and unit2 in countable_units:
+            # Countable units technically aren't directly convertible without 
+            # additional knowledge (e.g., how many pieces in a pack)
+            return False
+        
+        return False
+
 # Модуль объединенного OCR+Parsing импортируем отдельно,
 # чтобы избежать циклической зависимости
 try:
@@ -27,8 +108,71 @@ except ImportError:
     COMBINED_MODE_AVAILABLE = False
 
 from app.routers.fuzzy_match import fuzzy_match_product
-from app.utils.unit_converter import normalize_unit, is_compatible_unit
-from app.utils.xml_generator import build_xml
+try:
+    from app.utils.xml_generator import build_xml
+except ImportError:
+    # Функция для создания XML из telegram_bot.py
+    def build_xml(data: Dict) -> str:
+        """
+        Creates XML for Syrve from invoice data.
+        
+        :param data: Invoice data dictionary
+        :return: XML string
+        """
+        from xml.etree.ElementTree import Element, SubElement, tostring
+        
+        root = Element("SyrveDocument")
+        
+        if "supplier" in data:
+            SubElement(root, "Supplier").text = data["supplier"]
+        if "buyer" in data:
+            SubElement(root, "Buyer").text = data["buyer"]
+        if "date" in data:
+            SubElement(root, "Date").text = data["date"]
+        
+        items = SubElement(root, "Items")
+        for p in data.get("positions", []):
+            item = SubElement(items, "Item")
+            
+            if "name" in p:
+                SubElement(item, "Name").text = str(p["name"])
+            
+            if "quantity" in p:
+                SubElement(item, "Quantity").text = str(p["quantity"])
+            
+            if "unit" in p:
+                SubElement(item, "Unit").text = str(p.get("unit", ""))
+            
+            if "price" in p:
+                try:
+                    price = float(p["price"])
+                    SubElement(item, "Price").text = f"{price:.2f}"
+                except (ValueError, TypeError):
+                    SubElement(item, "Price").text = "0.00"
+            
+            if "sum" in p:
+                try:
+                    sum_value = float(p["sum"])
+                    SubElement(item, "Sum").text = f"{sum_value:.2f}"
+                except (ValueError, TypeError):
+                    SubElement(item, "Sum").text = "0.00"
+        
+        if "total_sum" in data:
+            try:
+                total = float(data["total_sum"])
+                SubElement(root, "TotalSum").text = f"{total:.2f}"
+            except (ValueError, TypeError):
+                # Calculate from positions
+                total = 0.0
+                for p in data.get("positions", []):
+                    try:
+                        total += float(p.get("sum", 0)) if p.get("sum") else 0
+                    except (ValueError, TypeError):
+                        pass
+                SubElement(root, "TotalSum").text = f"{total:.2f}"
+        
+        return tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+
 from app.db import SessionLocal
 from app.config import settings
 
