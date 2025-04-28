@@ -1,38 +1,27 @@
-# app/models/invoice.py
-"""
-Накладная (Invoice)
-───────────────────
-* один-ко-многим с InvoiceItem
-"""
-
 from __future__ import annotations
 
 from datetime import date
-from sqlalchemy import Column, Integer, Date, String
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+
+from sqlalchemy import String, Date
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
 
 class Invoice(Base):
+    """Оприходованная накладная."""
+
     __tablename__ = "invoices"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    number: Mapped[str | None] = mapped_column(String, nullable=True)
-    issued_at: Mapped[date] = mapped_column(Date, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    number: Mapped[str | None] = mapped_column(String(64))
+    invoice_date: Mapped[date] = mapped_column(Date, index=True)
+    supplier: Mapped[str | None] = mapped_column(String(255))
 
-    supplier: Mapped[str | None] = mapped_column(String, nullable=True)
-    buyer: Mapped[str | None] = mapped_column(String, nullable=True)
-    total_sum: Mapped[float | None] = mapped_column(nullable=True)
-
-    # ─────────────── связи ───────────────
+    # --- relationships -------------------------------------------------
     items: Mapped[list["InvoiceItem"]] = relationship(
-        "InvoiceItem",
-        back_populates="invoice",
-        cascade="all, delete-orphan",
-        lazy="selectin",
+        back_populates="invoice", cascade="all, delete-orphan"
     )
 
-    # ───────────── удобство ──────────────
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<Invoice id={self.id} №{self.number} {self.issued_at}>"
+        return f"<Invoice {self.id} №{self.number or '-'}>"
