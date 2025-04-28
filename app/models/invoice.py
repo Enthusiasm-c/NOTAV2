@@ -11,7 +11,7 @@ from .base import Base
 class Invoice(Base):
     __tablename__ = "invoices"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[IntPK]
 
     # FK → suppliers.id
     supplier_id: Mapped[int] = mapped_column(
