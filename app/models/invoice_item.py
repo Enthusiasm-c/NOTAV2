@@ -4,23 +4,22 @@ from decimal import Decimal
 from sqlalchemy import ForeignKey, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base
+from .base import Base, IntPK
 
 
-class InvoiceItem(Base):
+class InvoiceItem(Base, IntPK):
     __tablename__ = "invoice_items"
 
-    # составной первичный ключ
     invoice_id: Mapped[int] = mapped_column(
-        ForeignKey("invoices.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True, nullable=False
     )
     product_id: Mapped[int] = mapped_column(
-        ForeignKey("products.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
     )
 
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
-    price:    Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    sum:      Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    sum: Mapped[Decimal] = mapped_column(Numeric(14, 2))
 
     # --- relationships ------------------------------------------------------ #
     invoice: Mapped["Invoice"] = relationship(back_populates="items")
