@@ -28,11 +28,18 @@ from app.config import settings
 logger = structlog.get_logger()
 
 
+# ───────── app/routers/gpt_ocr.py  (изменилась лишь эта функция) ─────────
 async def _tg_download(bot: Bot, file_id: str) -> bytes:
-    """Скачиваем файл из Telegram, возвращаем bytes."""
-    tg_file: File = await bot.get_file(file_id)
-    async with bot.download_file(tg_file.file_path) as stream:
-        return await stream.read()
+    """
+    Скачиваем файл из Telegram и возвращаем bytes.
+
+    aiogram-3:
+        tg_file = await bot.get_file(file_id)
+        stream  = await bot.download_file(tg_file.file_path)   # coroutine → BytesIO
+    """
+    tg_file = await bot.get_file(file_id)
+    stream  = await bot.download_file(tg_file.file_path)  # <-- await, без  async with
+    return stream.read()                                  # BytesIO → bytes
 
 
 async def ocr(file_id: str, bot: Bot) -> str:
