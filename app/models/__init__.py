@@ -1,28 +1,26 @@
 """
-app package init
-────────────────
-* Делает «короткие» импорты ― `from app import Product, Base …`
-* Ничего лишнего не исполняет (важно для pytest и alembic).
+app.models package
+──────────────────
+Собирает вместе все модели и настройки, чтобы их можно было импортировать одной строкой:
+
+    from app.models import Base, Product, Supplier …
 """
 
 from __future__ import annotations
 
-# ── настройки доступны одной строкой ───────────────────────────────────────────
-from .config import settings  # noqa: F401
+# Настройки берём из корневого app.config
+from app.config import settings  # noqa: F401
 
-# ── модели (подтягиваем через app.models, где уже собран Base) ────────────────
-from .models import (  # noqa: F401
-    Base,
-    Supplier,
-    Product,
-    ProductNameLookup,
-    Invoice,
-    InvoiceItem,
-)
+# Базовый класс и все модели
+from .base import Base  # noqa: F401
+from .supplier import Supplier  # noqa: F401
+from .product import Product  # noqa: F401
+from .product_name_lookup import ProductNameLookup  # noqa: F401
+from .invoice import Invoice  # noqa: F401
+from .invoice_item import InvoiceItem  # noqa: F401
 
-__all__ = [
+__all__: list[str] = [
     "settings",
-    # модели
     "Base",
     "Supplier",
     "Product",
