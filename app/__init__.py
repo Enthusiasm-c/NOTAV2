@@ -1,31 +1,33 @@
+# app/__init__.py
 """
-app.models package
-──────────────────
-Собирает вместе все модели и настройки,
-чтобы их можно было импортировать одной строкой:
-
-    from app.models import Product, Supplier, Base
+Инициализация пакета **app**
+────────────────────────────
+* Даёт «короткие» импорты:  `from app import Product`
+* Настраивает SQLAlchemy-модели, чтобы Base.metadata уже знал обо всех таблицах.
 """
 
 from __future__ import annotations
 
-# Настройки берём из корневого app.config, а не из не-существующего app.models.config
-from app.config import settings  # noqa: F401
+# --- Конфиг (settings) -------------------------------------------------------
+from .config import settings                       # noqa: F401
 
-# Базовый класс и модели
-from .base import Base  # noqa: F401
-from .supplier import Supplier  # noqa: F401
-from .product import Product  # noqa: F401
-from .product_name_lookup import ProductNameLookup  # noqa: F401
-from .invoice import Invoice  # noqa: F401
-from .invoice_item import InvoiceItem  # noqa: F401
+# --- Модели / SQLAlchemy -----------------------------------------------------
+# Важно: сперва Base (там MetaData), потом модели, чтобы мапперы успели настроиться
+from .models.base import Base                      # noqa: F401
+from .models.product import Product                # noqa: F401
+from .models.supplier import Supplier              # noqa: F401
+from .models.invoice import Invoice                # noqa: F401
+from .models.invoice_item import InvoiceItem       # noqa: F401
+from .models.product_name_lookup import (          # noqa: F401
+    ProductNameLookup,
+)
 
 __all__: list[str] = [
     "settings",
     "Base",
-    "Supplier",
     "Product",
-    "ProductNameLookup",
+    "Supplier",
     "Invoice",
     "InvoiceItem",
+    "ProductNameLookup",
 ]
