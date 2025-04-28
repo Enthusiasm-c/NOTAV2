@@ -34,3 +34,6 @@ str_pk = Annotated[
     str,
     mapped_column(String(64), primary_key=True, autoincrement=False),
 ]
+# ─────────────────────── обратная совместимость ──────────────────────
+IntPK = int_pk    # прежний PascalCase-вариант, чтобы модели не падали
+StrPK = str_pk
