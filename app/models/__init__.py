@@ -1,24 +1,32 @@
-# app/models/__init__.py
 """
-Собираем все SQLAlchemy-модели в одном месте
-────────────────────────────────────────────
-Импортируя `app.models`, вы получаете доступ ко всем моделям
-и гарантируете их регистрацию в MetaData (важно для Alembic).
+app package init
+────────────────
+* Делает «короткие» импорты ― `from app import Product, Base …`
+* Ничего лишнего не исполняет (важно для pytest и alembic).
 """
 
 from __future__ import annotations
 
-# порядок важен для ForeignKey / relationship
-from .supplier import Supplier          # noqa: F401
-from .product import Product            # noqa: F401
-from .invoice import Invoice            # noqa: F401
-from .invoice_item import InvoiceItem   # noqa: F401
-from .product_name_lookup import ProductNameLookup  # noqa: F401
+# ── настройки доступны одной строкой ───────────────────────────────────────────
+from .config import settings  # noqa: F401
+
+# ── модели (подтягиваем через app.models, где уже собран Base) ────────────────
+from .models import (  # noqa: F401
+    Base,
+    Supplier,
+    Product,
+    ProductNameLookup,
+    Invoice,
+    InvoiceItem,
+)
 
 __all__ = [
+    "settings",
+    # модели
+    "Base",
     "Supplier",
     "Product",
+    "ProductNameLookup",
     "Invoice",
     "InvoiceItem",
-    "ProductNameLookup",
 ]
