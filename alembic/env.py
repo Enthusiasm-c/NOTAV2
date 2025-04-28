@@ -9,10 +9,16 @@ Async-friendly Alembic environment for Nota V2
 
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
+BASE_DIR = Path(__file__).resolve().parent.parent   # → /opt/notav2
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 import asyncio
 import logging
 from logging.config import fileConfig
-from pathlib import Path
 
 from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context
