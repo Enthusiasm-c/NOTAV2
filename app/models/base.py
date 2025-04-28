@@ -1,25 +1,18 @@
 """
-Базовый declarative-класс + тип-шорткаты.
+Общий базовый класс + миксин с int-PK
 """
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from sqlalchemy import Integer
-from sqlalchemy.orm import DeclarativeBase, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# «Коробочный» Base
-# ------------------------------------------------------------------------------
 class Base(DeclarativeBase):
-    """Единый Base для всех моделей."""
-    pass
+    """Общий declarative-base для всех моделей"""
+    repr_cols_num = 3  # для __repr__ в MappedAsDataclass (если понадобится)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Шорт-каты для колонок
-# ------------------------------------------------------------------------------
-# Поле «INTEGER PRIMARY KEY AUTOINCREMENT»
-IntPK = Annotated[int, mapped_column(Integer, primary_key=True, autoincrement=True)]
+class IntPK:  # mixin, НЕ наследуемся от Base!
+    """Добавляет авто-инкрементный int primary-key"""
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
