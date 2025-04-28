@@ -1,31 +1,50 @@
 """
-app.models
-──────────
-Единая точка импорта для всех ORM-моделей и объекта settings.
+app
+───
+Инициализатор пакета.
 
-Пример::
-    from app.models import Product, Supplier, settings
+* Позволяет короткие импорты::
+
+      from app import settings, Product, Supplier, Base
+
+* Экспортирует сессию и движок БД (пригодится в CLI-скриптах).
+* Добавляет shim для совместимости: `import app.base` → `app.models.base`.
 """
 
 from __future__ import annotations
 
-# Конфигурация проекта (DB-URL и т.п.)
-from app.config import settings               # noqa: F401  → экспортируем наружу
+# ───────── базовые настройки ─────────
+from .config import settings  # noqa: F401  ← .env / DB-URL, и т.п.
 
-# Базовый класс и все модели
-from .base import Base                        # noqa: F401
-from .supplier import Supplier                # noqa: F401
-from .product import Product                  # noqa: F401
-from .invoice import Invoice                  # noqa: F401
-from .invoice_item import InvoiceItem         # noqa: F401
-from .product_name_lookup import ProductNameLookup  # noqa: F401
+# ───────── модели и Base ─────────────
+from .models import (  # noqa: F401
+    Base,
+    Supplier,
+    Product,
+    Invoice,
+    InvoiceItem,
+    ProductNameLookup,
+)
+
+# ───────── сессия и движок ───────────
+from .db import SessionLocal, engine  # noqa: F401
 
 __all__ = [
+    # конфиг
     "settings",
+    # ORM-база и модели
     "Base",
     "Supplier",
     "Product",
     "Invoice",
     "InvoiceItem",
     "ProductNameLookup",
+    # БД
+    "SessionLocal",
+    "engine",
 ]
+
+# ───────── shim: app.base → app.models.base ─────────
+import sys as _sys
+
+_sys.modules[f"{__name__}.base"] = _sys.modules["app.models.base"]
