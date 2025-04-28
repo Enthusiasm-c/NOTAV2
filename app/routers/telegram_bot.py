@@ -15,11 +15,16 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
-# Импортируем новый объединенный модуль вместо отдельных
-from app.routers.gpt_combined import ocr_and_parse
-# Оставляем старые модули для обратной совместимости
+# Импортируем модули распознавания и парсинга
 from app.routers.gpt_ocr import ocr
 from app.routers.gpt_parsing import parse
+# Модуль объединенного OCR+Parsing импортируем отдельно,
+# чтобы избежать циклической зависимости
+try:
+    from app.routers.gpt_combined import ocr_and_parse as combined_ocr_parse
+    COMBINED_MODE_AVAILABLE = True
+except ImportError:
+    COMBINED_MODE_AVAILABLE = False
 
 from app.routers.fuzzy_match import fuzzy_match_product
 from app.utils.unit_converter import normalize_unit, is_compatible_unit
@@ -35,14 +40,27 @@ router = Router(name=__name__)
 async def _run_pipeline(file_id: str, bot: Bot) -> dict:
     """Photo in Telegram → structured dict (OCR+Parsing)."""
     try:
-        # Используем оптимизированный объединенный вызов API
-        raw_text, parsed_data = await ocr_and_parse(file_id, bot)
+        # Пытаемся использовать оптимизированный объединенный вызов API, если доступен
+        if COMBINED_MODE_AVAILABLE:
+            try:
+                _, parsed_data = await combined_ocr_parse(file_id, bot)
+                logger.info("Combined OCR+Parsing completed successfully",
+                           positions_count=len(parsed_data.get("positions", [])))
+                return parsed_data
+            except Exception as e:
+                logger.warning("Combined OCR+Parsing failed, falling back to separate calls", 
+                              error=str(e))
         
-        logger.info("OCR+Parsing completed successfully", 
-                   text_length=len(raw_text),
-                   positions_count=len(parsed_data.get("positions", [])))
+        # Если объединенный режим недоступен или произошла ошибка,
+        # используем отдельные вызовы OCR и парсинга
+        raw_text = await ocr(file_id, bot)
+        logger.info("OCR completed successfully", text_length=len(raw_text))
         
-        return parsed_data
+        parsed = await parse(raw_text)
+        logger.info("Parsing completed successfully", 
+                   positions_count=len(parsed.get("positions", [])))
+        
+        return parsed
     except Exception as exc:
         logger.exception("Pipeline failed", exc_info=exc)
         raise
@@ -234,7 +252,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
     file_id = m.photo[-1].file_id  # get largest resolution photo
 
     try:
-        # Используем оптимизированный пайплайн
+        # Используем пайплайн обработки
         data = await _run_pipeline(file_id, bot)
     except Exception as exc:
         logger.exception("Pipeline failed", exc_info=exc)
