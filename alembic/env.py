@@ -1,78 +1,80 @@
+# alembic/env.py
 """
-Alembic environment for Nota V2
-───────────────────────────────
-* Добавляет корень проекта (/opt/notav2) в sys.path
-* Импортирует ВСЕ модели, чтобы autogenerate видел таблицы
+Async-friendly Alembic environment for Nota V2
+─────────────────────────────────────────────
+* Работает и в offline-, и в online-режимах.
+* В online-режиме использует create_async_engine,
+  а миграции запускает через conn.run_sync(do_run_migrations).
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging.config
-import sys
+import logging
+from logging.config import fileConfig
 from pathlib import Path
-from typing import AsyncGenerator
 
+from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# ── PYTHONPATH ──────────────────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent  # /opt/notav2
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
+# --- Nota V2 imports ---------------------------------------------------------
+from app.config import settings                           # ← гарантирует PYTHONPATH
+import app.models.base                                    # noqa: F401  (метаданные)
+# --------------------------------------------------------------------------- #
 
-# теперь можно импортировать настройки и модели
-from app.config import settings  # noqa: E402
-import app.models  # noqa: F401,E402  ← ВАЖНО: импортирует всё
-
-# ── Alembic config ──────────────────────────────────────────────────────
+# Загружаем конфиг-файл alembic.ini (чтобы работали section [loggers] и т.п.)
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+logger = logging.getLogger("alembic.env")
 
-# Optional: включите логирование Alembic
-logging.config.fileConfig(config.config_file_name)
+# Метаданные всех моделей (Base.metadata уже импортирован строкой выше)
+target_metadata = app.models.base.Base.metadata  # type: ignore[attr-defined]
 
-target_metadata = app.models.Base.metadata  # noqa: E402
-
-
-# ── Runners ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------- #
+#  OFFLINE: вывод SQL в stdout / файл
+# --------------------------------------------------------------------------- #
 def run_migrations_offline() -> None:
-    """CLI-режим – генерируем SQL без подключения к БД."""
+    url = settings.database_url
     context.configure(
-        url=settings.database_url,
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+# --------------------------------------------------------------------------- #
+#  ONLINE: выполняем миграции по живому соединению
+# --------------------------------------------------------------------------- #
+def do_run_migrations(connection):
+    """Синхронная часть: configure + context.run_migrations()."""
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 async def run_migrations_online() -> None:
-    """Основной режим – подключения к БД и выполнение миграций."""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section),  # type: ignore[arg-type]
-        prefix="sqlalchemy.",
-        future=True,
-        pool_pre_ping=True,
+    connectable = create_async_engine(
+        settings.database_url, pool_pre_ping=True, future=True
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(
-            lambda conn: context.configure(
-                connection=conn,
-                target_metadata=target_metadata,
-                compare_type=True,
-                compare_server_default=True,
-            )
-        )
-
-        async with context.begin_transaction():
-            await connection.run_sync(context.run_migrations)
+    async with connectable.connect() as conn:
+        await conn.run_sync(do_run_migrations)
 
     await connectable.dispose()
 
 
+# --------------------------------------------------------------------------- #
 if context.is_offline_mode():
     run_migrations_offline()
 else:
