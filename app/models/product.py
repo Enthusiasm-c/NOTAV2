@@ -21,9 +21,8 @@ class Product(Base, IntPK):
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
 
     # связанные таблицы
-    items: Mapped[list["InvoiceItem"]] = relationship(back_populates="product")
-    name_lookups: Mapped[list["InvoiceNameLookup"]] = relationship(
-        "InvoiceNameLookup",
+    invoice_items: Mapped[list["InvoiceItem"]] = relationship(back_populates="product")
+    name_lookups: Mapped[list["ProductNameLookup"]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
         passive_deletes=True,
