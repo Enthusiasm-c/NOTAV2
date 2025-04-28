@@ -1,18 +1,28 @@
+# app/models/product_name_lookup.py
 """
-Compatibility layer for legacy imports.
-
-Old code/tests expect:
-    from app.models.product_name_lookup import ProductNameLookup
-
-The real model is now `InvoiceNameLookup`.  
-We export it under the previous name to avoid breaking changes.
+Таблица с «псевдонимами» товаров:
+* «яблоко», «apple», «apel» → product_id = 42
 """
 
 from __future__ import annotations
 
-from .invoice_name_lookup import InvoiceNameLookup  # actual model
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# legacy alias
-ProductNameLookup = InvoiceNameLookup
+from .base import Base, int_pk
 
-__all__ = ["ProductNameLookup"]
+
+class ProductNameLookup(Base):
+    """Уникальная пара (product_id, alias)."""
+
+    __tablename__ = "product_name_lookup"
+
+    id: Mapped[int] = int_pk()
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    alias: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+
+    # back-reference в Product.name_lookups
+    product: Mapped["Product"] = relationship(back_populates="name_lookups")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Lookup {self.alias!r} → {self.product_id}>"
