@@ -1,20 +1,40 @@
-__all__ = ["generate_syrve_xml"]
+# app/utils/xml_generator.py
+"""
+Формирование XML для Syrve (упрощённый вариант для MVP).
+"""
 
-from lxml import etree
+from __future__ import annotations
+import xml.etree.ElementTree as ET
+from datetime import date
 
-def generate_syrve_xml(data: dict) -> str:
-    """Генерирует XML-документ по схеме Syrve"""
-    root = etree.Element("SyrveDocument")
-    etree.SubElement(root, "Supplier").text = data.get("supplier_name", "")
-    etree.SubElement(root, "Buyer").text = data.get("buyer_name", "")
-    etree.SubElement(root, "Date").text = data.get("date", "")
-    items_elem = etree.SubElement(root, "Items")
-    for pos in data.get("positions", []):
-        item = etree.SubElement(items_elem, "Item")
-        etree.SubElement(item, "Name").text = str(pos.get("name", ""))
-        etree.SubElement(item, "Quantity").text = str(pos.get("quantity", ""))
-        etree.SubElement(item, "Unit").text = str(pos.get("unit", ""))
-        etree.SubElement(item, "Price").text = str(pos.get("price", ""))
-        etree.SubElement(item, "Sum").text = str(pos.get("sum", ""))
-    etree.SubElement(root, "TotalSum").text = str(data.get("total_sum", ""))
-    return etree.tostring(root, pretty_print=True, encoding="utf-8").decode("utf-8")
+def build_xml(data: dict) -> str:
+    """
+    data = {
+        "supplier": "ООО Ромашка",
+        "buyer": "ООО Ресторан",
+        "date": "2025-04-10",
+        "positions": [
+            {"name":"Товар А","quantity":5,"unit":"кг","price":100.0,"sum":500.0},
+            …
+        ],
+        "total_sum": 900.0
+    }
+    """
+    root = ET.Element("SyrveDocument")
+
+    ET.SubElement(root, "Supplier").text = data["supplier"]
+    ET.SubElement(root, "Buyer").text    = data["buyer"]
+    ET.SubElement(root, "Date").text     = data.get("date", str(date.today()))
+
+    items = ET.SubElement(root, "Items")
+    for p in data["positions"]:
+        item = ET.SubElement(items, "Item")
+        ET.SubElement(item, "Name").text     = p["name"]
+        ET.SubElement(item, "Quantity").text = str(p["quantity"])
+        ET.SubElement(item, "Unit").text     = p.get("unit") or ""
+        ET.SubElement(item, "Price").text    = f"{p.get('price', 0):.2f}"
+        ET.SubElement(item, "Sum").text      = f"{p.get('sum', 0):.2f}"
+
+    ET.SubElement(root, "TotalSum").text = f"{data.get('total_sum', 0):.2f}"
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode()
