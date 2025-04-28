@@ -1,34 +1,35 @@
 from __future__ import annotations
 
-from sqlalchemy import String, Boolean
+from sqlalchemy import String, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, IntPK
 
 
 class Product(Base):
-    """
-    Номенклатура товаров (master-data из POS/ERP).
+    """Товар, учётная карточка."""
 
-    * `id` (PK) хранится как строка — совпадает с UUID из исходной системы  
-    * `measure_name` – «кг», «л», «шт» и т.п.  
-    * `is_ingredient` – признак «сырья» для кухни (опционально)
-    """
+    # ─── PK ────────────────────────────────────────────────────────────────
+    id: Mapped[IntPK]  # type: ignore[valid-type]
 
-    __tablename__ = "products"
+    # ─── Атрибуты товара ──────────────────────────────────────────────────
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)  # кг, л, шт …
+    default_price: Mapped[float | None] = mapped_column(Numeric(14, 2))  # опционально
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    measure_name: Mapped[str | None] = mapped_column(String(64))
-    is_ingredient: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-    # ───── связи ────────────────────────────────────────────────────────────
+    # ─── Связи ─────────────────────────────────────────────────────────────
+    items: Mapped[list["InvoiceItem"]] = relationship(
+        "InvoiceItem",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     name_lookups: Mapped[list["ProductNameLookup"]] = relationship(
         "ProductNameLookup",
         back_populates="product",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
-    # ───── вспомогательные методы ──────────────────────────────────────────
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Product {self.id}: {self.name!r}>"
