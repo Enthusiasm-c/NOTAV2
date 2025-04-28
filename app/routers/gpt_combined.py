@@ -5,8 +5,6 @@
 - Сокращение количества API-запросов в 2 раза
 - Уменьшение времени обработки накладной примерно вдвое
 - Снижение стоимости API-запросов
-
-При этом сохраняются отдельные функции OCR и парсинга для тестирования и отладки.
 """
 
 from __future__ import annotations
@@ -19,55 +17,16 @@ from typing import Dict, Any, Tuple, Optional
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from aiogram import Bot
-from aiogram.types import File
 
 from app.config import settings
-from app.routers.gpt_ocr import _tg_download, ocr
-from app.routers.gpt_parsing import _MOCK_RESULT, parse
+from app.utils.telegram_utils import download_file
 
 logger = structlog.get_logger()
 
 
 # --------------------------------------------------------------------------- #
-#  Оптимизированная функция, объединяющая OCR и парсинг в один запрос
+#  Базовые служебные функции
 # --------------------------------------------------------------------------- #
-async def process_invoice(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
-    """
-    Основная оптимизированная функция: обрабатывает фото накладной в один запрос к API.
-    
-    Args:
-        file_id: Идентификатор файла в Telegram
-        bot: Экземпляр бота Aiogram
-        
-    Returns:
-        Tuple[str, Dict[str, Any]]: (распознанный текст, структурированные данные)
-        
-    Raises:
-        Exception: При ошибке в процессе обработки
-    """
-    if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY not set – using mock result")
-        return "OCR MOCK (API KEY NOT SET)", dict(_MOCK_RESULT)
-
-    logger.info("Starting combined OCR+Parsing process", file_id=file_id)
-    
-    try:
-        # Скачиваем изображение
-        image_bytes = await _tg_download(bot, file_id)
-        
-        # Выполняем объединенный запрос
-        raw_text, parsed_data = await _call_combined_api(image_bytes)
-        
-        logger.info("Combined OCR+Parsing successful", 
-                   text_length=len(raw_text), 
-                   positions_count=len(parsed_data.get("positions", [])))
-        
-        return raw_text, parsed_data
-    except Exception as e:
-        logger.exception("Combined OCR+Parsing failed", error=str(e))
-        raise
-
-
 @retry(
     # Retry only on 5xx and network errors
     retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.NetworkError)),
@@ -184,7 +143,9 @@ async def _call_combined_api(image_bytes: bytes) -> Tuple[str, Dict[str, Any]]:
                 raise ValueError("Failed to extract both raw text and JSON from API response")
                 
             # Используем существующую функцию parse из gpt_parsing
-            parsed_data = await _fallback_parsing(raw_text)
+            # Но импортируем её прямо здесь, чтобы избежать циклического импорта
+            from app.routers.gpt_parsing import call_openai_with_retry
+            parsed_data = await call_openai_with_retry(raw_text)
         
         logger.info("Combined API call successful", 
                    raw_text_length=len(raw_text), 
@@ -264,29 +225,61 @@ def _split_api_response(content: str) -> Tuple[str, Optional[str]]:
     return raw_text, json_str
 
 
-async def _fallback_parsing(raw_text: str) -> Dict[str, Any]:
+# --------------------------------------------------------------------------- #
+#  MOCK-result для случаев ошибок
+# --------------------------------------------------------------------------- #
+_MOCK_RESULT: dict[str, object] = {
+    "supplier": "[MOCK DATA] ООО Ромашка",
+    "buyer": "ООО Ресторан",
+    "date": "2025-01-01",
+    "positions": [
+        {"name": "[MOCK] Товар А", "quantity": 5, "unit": "кг", "price": 100.0, "sum": 500.0},
+        {"name": "[MOCK] Товар Б", "quantity": 2, "unit": "л", "price": 200.0, "sum": 400.0},
+    ],
+    "total_sum": 900.0,
+}
+
+
+# --------------------------------------------------------------------------- #
+#  Публичное API
+# --------------------------------------------------------------------------- #
+async def process_invoice(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
     """
-    Запасной метод для парсинга, используемый, если объединенный запрос не смог извлечь JSON.
+    Основная функция обработки накладной (оптимизированная).
     
     Args:
-        raw_text: Распознанный текст для парсинга
+        file_id: Идентификатор файла в Telegram
+        bot: Экземпляр бота Aiogram
         
     Returns:
-        Dict[str, Any]: Структурированные данные
+        Tuple[str, Dict[str, Any]]: (распознанный текст, структурированные данные)
+        
+    Raises:
+        Exception: При ошибке в процессе обработки
     """
+    if not settings.openai_api_key:
+        logger.warning("OPENAI_API_KEY not set – using mock result")
+        return "OCR MOCK (API KEY NOT SET)", dict(_MOCK_RESULT)
+
+    logger.info("Starting combined OCR+Parsing process", file_id=file_id)
+    
     try:
-        # Используем существующую функцию parse из модуля gpt_parsing
-        parsed_data = await parse(raw_text)
-        return parsed_data
+        # Скачиваем изображение с Telegram
+        image_bytes = await download_file(bot, file_id)
+        
+        # Выполняем объединенный запрос
+        raw_text, parsed_data = await _call_combined_api(image_bytes)
+        
+        logger.info("Combined OCR+Parsing successful", 
+                   text_length=len(raw_text), 
+                   positions_count=len(parsed_data.get("positions", [])))
+        
+        return raw_text, parsed_data
     except Exception as e:
-        logger.error("Fallback parsing failed", error=str(e))
-        # Возвращаем заглушку в случае ошибки
-        return dict(_MOCK_RESULT)
+        logger.exception("Combined OCR+Parsing failed", error=str(e))
+        raise
 
 
-# --------------------------------------------------------------------------- #
-#  API для использования в других модулях
-# --------------------------------------------------------------------------- #
 async def ocr_and_parse(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
     """
     Публичный API для процессинга накладной в один запрос.
