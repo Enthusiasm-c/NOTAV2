@@ -2,7 +2,7 @@ aiogram==3.4.1            # Telegram-бот
 SQLAlchemy[asyncio]==2.0.29
 alembic==1.13.1
 asyncpg==0.29.0           # драйвер PostgreSQL
-pydantic==2.6.4
+pydantic>=2.4.1,<2.6.0    # Compatible with aiogram 3.4.1
 python-dotenv==1.0.1
 httpx==0.27.0
 openai==1.25.0            # GPT-4o Vision/mini
