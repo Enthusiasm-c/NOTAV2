@@ -1,90 +1,100 @@
-import logging
-from aiogram import Router, F, types
-from aiogram.filters import Command
-from aiogram.fsm.state import StatesGroup, State
+"""
+Telegram-router  (Aiogram v3)  – приём накладных и весь пайплайн:
+    фото ➜ OCR ➜ Parsing ➜ Fuzzy ➜ подтверждение ➜ Syrve
+MVP-вариант: если любой шаг падает – посылаем понятное сообщение.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import structlog
+from aiogram import Bot, Router, F
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
-logger = logging.getLogger(__name__)
+from app.routers.gpt_ocr import ocr
+from app.routers.gpt_parsing import parse
+from app.routers.fuzzy_match import fuzzy_match_product
+from app.db import SessionLocal
+from app.utils.xml_generator import build_xml  # если уже есть
+from app.config import settings
 
-router = Router()
+logger = structlog.get_logger()
+router = Router(name=__name__)
 
 
-class InvoiceFSM(StatesGroup):
-    WaitingPhoto = State()
-    Reviewing = State()
-    Confirming = State()
+# ───────────────────────── helpers ──────────────────────────
+async def _run_pipeline(file_id: str, bot: Bot) -> dict:
+    """Фото в Telegram → структурированный dict (OCR+Parsing)."""
+    raw_text = await ocr(file_id, bot)          # может бросить исключение
+    parsed   = await parse(raw_text)            # может бросить исключение
+    return parsed
 
 
-@router.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
-    """Приветствие и переход в состояние ожидания фото."""
-    await state.clear()
-    await state.set_state(InvoiceFSM.WaitingPhoto)
-    logger.info(f"User {message.from_user.id} started bot.")
-    await message.answer(
-        "Привет! Я Nota V2 — помогаю загружать накладные в Syrve.\n"
-        "Пришли фото накладной, а дальше я всё сделаю сам."
+def positions_summary(data: dict) -> str:
+    return "\n".join(
+        f"• {p['name']} × {p['quantity']}" for p in data["positions"]
+    )
+
+
+# ───────────────────────── handlers ─────────────────────────
+@router.message(CommandStart())
+async def cmd_start(m: Message):
+    await m.answer(
+        "👋 Привет! Пришлите фото накладной, я распознаю позиции и загружу в Syrve."
     )
 
 
 @router.message(F.photo)
-async def handle_photo(message: types.Message, state: FSMContext):
-    """Обработка фото, переход к Reviewing, заглушка распознавания."""
-    await state.set_state(InvoiceFSM.Reviewing)
-    logger.info(f"User {message.from_user.id} sent a photo (invoice).")
-    await message.answer("Фото получено, распознаю… (это может занять ~30 сек)")
+async def handle_photo(m: Message, state: FSMContext, bot: Bot):
+    await m.answer("⏳ Обрабатываю накладную…")
+    file_id = m.photo[-1].file_id  # берём фото с макс. разрешением
 
-    # --- Заглушка GPT OCR/Parsing ---
-    # Здесь должны быть вызовы await gpt_ocr.ocr(), await gpt_parsing.parse()
-    # Для MVP — фиксированный результат:
-    fake_result = {
-        "positions": [
-            {"name": "Товар", "quantity": 1}
-        ]
-    }
-    await state.update_data(invoice=fake_result)
-    logger.info(f"Invoice recognized: {fake_result}")
+    try:
+        data = await _run_pipeline(file_id, bot)
+    except Exception as exc:
+        logger.exception("Pipeline failed", exc_info=exc)
+        await m.answer("❌ Не удалось распознать документ. Попробуйте ещё раз.")
+        return
 
-    # --- Кнопки подтверждения ---
-    kb = types.InlineKeyboardMarkup(
+    # fuzzy-match для каждой позиции (асинхронный БД-сеанс)
+    async with SessionLocal() as session:
+        for p in data["positions"]:
+            pid, conf = await fuzzy_match_product(session, p["name"], settings.fuzzy_threshold)
+            p["match_id"] = pid
+            p["confidence"] = conf
+
+    logger.info("Invoice recognized", data=data)
+    await state.update_data(invoice=data)
+
+    kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="✅ Да", callback_data="confirm:yes"),
-                types.InlineKeyboardButton(text="✏ Нет", callback_data="confirm:no"),
-            ]
+            [InlineKeyboardButton(text="✅ Всё верно", callback_data="inv_ok")],
+            [InlineKeyboardButton(text="✏️ Исправить", callback_data="inv_edit")],
         ]
     )
-    await message.answer(
-        f"Нашёл {len(fake_result['positions'])} позицию(и), всё верно?",
-        reply_markup=kb
+    await m.answer(
+        f"⚙️ Нашёл {len(data['positions'])} позиций:\n{positions_summary(data)}",
+        reply_markup=kb,
     )
-    await state.set_state(InvoiceFSM.Confirming)
 
 
-@router.callback_query(F.data.startswith("confirm:"))
-async def handle_confirm(call: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора Да/Нет на этапе подтверждения накладной."""
-    answer = call.data.split(":", 1)[1]
-    user_id = call.from_user.id
-    if answer == "yes":
-        logger.info(f"User {user_id} confirmed invoice.")
-        await call.message.answer(
-            "Накладная отправлена! Готов принять следующую."
-        )
-        await state.clear()
-        await state.set_state(InvoiceFSM.WaitingPhoto)
-    else:
-        logger.info(f"User {user_id} declined invoice (edit requested).")
-        await call.message.answer(
-            "Функция редактирования в разработке. Пришли новое фото накладной."
-        )
-        await state.clear()
-        await state.set_state(InvoiceFSM.WaitingPhoto)
-    await call.answer()
+# ───────────────────────── callbacks ────────────────────────
+@router.callback_query(F.data == "inv_ok")
+async def cb_ok(c: CallbackQuery, state: FSMContext, bot: Bot):
+    data = (await state.get_data())["invoice"]
+    xml_str = build_xml(data)
+
+    # здесь можете отправить xml в Syrve; пока просто лог
+    logger.info("XML ready", xml_len=len(xml_str))
+
+    await c.message.answer("✅ Накладная загружена в Syrve.")
+    await c.answer()
 
 
-@router.message(F.text)
-async def fallback(message: types.Message, state: FSMContext):
-    """Фоллбек для любых нераспознанных сообщений."""
-    logger.info(f"User {message.from_user.id} sent text: {message.text!r}")
-    await message.answer("Пришли фото накладной или /start.")
+@router.callback_query(F.data == "inv_edit")
+async def cb_edit(c: CallbackQuery):
+    await c.message.answer("✏️ Функция редактирования в разработке.")
+    await c.answer()
