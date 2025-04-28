@@ -1,60 +1,134 @@
 """
-Конвертация единиц измерения для накладных.
+Unit conversion module for invoice processing.
 
-Поддерживаемые преобразования:
-- Объем: мл ↔ л
-- Вес: г ↔ кг
-- Штучные товары: шт, упак, кор
+Supported conversions:
+- Volume: ml ↔ l
+- Weight: g ↔ kg
+- Countable items: pcs, pack, box
+
+This module supports aliases in both English and Indonesian.
 """
 
 from typing import Tuple, Optional
 
-# Словарь нормализации единиц измерения
+# Unit normalization dictionary
 UNIT_ALIASES = {
-    # Объем
-    "л": "л", "ltr": "л", "литр": "л", "литры": "л", "литров": "л",
-    "мл": "мл", "ml": "мл", "миллилитр": "мл",
-    # Вес
-    "кг": "кг", "kg": "кг", "кило": "кг", "килограмм": "кг",
-    "г": "г", "gr": "г", "грамм": "г", "гр": "г",
-    # Штучные
-    "шт": "шт", "штука": "шт", "штуки": "шт", "штук": "шт",
-    "упак": "упак", "упаковка": "упак", "уп": "упак",
-    "кор": "кор", "коробка": "кор", "коробки": "кор"
+    # English volume units
+    "l": "l", "ltr": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l",
+    "ml": "ml", "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
+    
+    # English weight units
+    "kg": "kg", "kilo": "kg", "kilogram": "kg", "kilograms": "kg",
+    "g": "g", "gr": "g", "gram": "g", "grams": "g",
+    
+    # English countable units
+    "pcs": "pcs", "pc": "pcs", "piece": "pcs", "pieces": "pcs",
+    "pack": "pack", "package": "pack", "pkg": "pack",
+    "box": "box", "boxes": "box",
+    
+    # Indonesian volume units
+    "liter": "l", "lt": "l",
+    "mililiter": "ml", "mili": "ml",
+    
+    # Indonesian weight units
+    "kilogram": "kg", "kilo": "kg",
+    "gram": "g",
+    
+    # Indonesian countable units
+    "buah": "pcs", "biji": "pcs", "pcs": "pcs", "potong": "pcs",
+    "paket": "pack", "pak": "pack",
+    "kotak": "box", "dus": "box", "kardus": "box",
+    
+    # Common abbreviations
+    "ea": "pcs",  # each
+    "btl": "pcs",  # bottle/botol
 }
 
-# Коэффициенты конвертации
+# Conversion factors between units
 CONVERSION_FACTORS = {
-    ("мл", "л"): 0.001,
-    ("л", "мл"): 1000,
-    ("г", "кг"): 0.001,
-    ("кг", "г"): 1000,
+    ("ml", "l"): 0.001,
+    ("l", "ml"): 1000,
+    ("g", "kg"): 0.001,
+    ("kg", "g"): 1000,
 }
 
 def normalize_unit(unit_str: str) -> str:
-    """Нормализует единицу измерения к стандартному виду."""
+    """
+    Normalize unit string to standard format.
+    
+    Args:
+        unit_str (str): Input unit string
+        
+    Returns:
+        str: Normalized unit string
+    """
+    if not unit_str:
+        return ""
+    
     unit_str = unit_str.lower().strip()
     return UNIT_ALIASES.get(unit_str, unit_str)
 
 def convert(value: float, from_unit: str, to_unit: str) -> Optional[float]:
     """
-    Конвертирует значение из одной единицы измерения в другую.
+    Convert value from one unit to another.
     
-    :param value: Исходное значение
-    :param from_unit: Исходная единица измерения
-    :param to_unit: Целевая единица измерения
-    :return: Конвертированное значение или None, если конвертация невозможна
+    Args:
+        value (float): Source value
+        from_unit (str): Source unit
+        to_unit (str): Target unit
+        
+    Returns:
+        Optional[float]: Converted value or None if conversion is not possible
     """
     from_unit = normalize_unit(from_unit)
     to_unit = normalize_unit(to_unit)
     
-    # Если единицы измерения уже совпадают
+    # If units already match
     if from_unit == to_unit:
         return value
     
-    # Поиск коэффициента конвертации
+    # Find conversion factor
     factor = CONVERSION_FACTORS.get((from_unit, to_unit))
     if factor is not None:
         return value * factor
     
+    # No conversion found
     return None
+
+def is_compatible_unit(unit1: str, unit2: str) -> bool:
+    """
+    Check if two units are compatible (can be converted between each other).
+    
+    Args:
+        unit1 (str): First unit
+        unit2 (str): Second unit
+        
+    Returns:
+        bool: True if units are compatible, False otherwise
+    """
+    unit1 = normalize_unit(unit1)
+    unit2 = normalize_unit(unit2)
+    
+    # Same normalized units are always compatible
+    if unit1 == unit2:
+        return True
+    
+    # Check if there's a direct conversion factor
+    if (unit1, unit2) in CONVERSION_FACTORS or (unit2, unit1) in CONVERSION_FACTORS:
+        return True
+    
+    # Check unit categories
+    volume_units = {"l", "ml"}
+    weight_units = {"kg", "g"}
+    countable_units = {"pcs", "pack", "box"}
+    
+    if unit1 in volume_units and unit2 in volume_units:
+        return True
+    if unit1 in weight_units and unit2 in weight_units:
+        return True
+    if unit1 in countable_units and unit2 in countable_units:
+        # Countable units technically aren't directly convertible without 
+        # additional knowledge (e.g., how many pieces in a pack)
+        return False
+    
+    return False
