@@ -2,28 +2,36 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Date, ForeignKey, Numeric
+from sqlalchemy import Date, Numeric, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, IntPK
 
-__all__ = ["Invoice"]
 
+class Invoice(Base):
+    """Накладная."""
 
-class Invoice(Base, IntPK):
-    __tablename__ = "invoices"
+    # ─── PK ────────────────────────────────────────────────────────────────
+    id: Mapped[IntPK]  # type: ignore[valid-type]
 
-    supplier_id: Mapped[int] = mapped_column(
-        ForeignKey("suppliers.id", ondelete="RESTRICT"),
-        index=True,
-        nullable=False,
-    )
-    number: Mapped[str | None]
-    date: Mapped[date]
+    # ─── Метаданные ───────────────────────────────────────────────────────
+    number: Mapped[str | None] = mapped_column(unique=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
 
-    supplier: Mapped["Supplier"] = relationship(back_populates="invoices")
+    # ─── FK на поставщика ────────────────────────────────────────────────
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"), index=True)
+    supplier: Mapped["Supplier"] = relationship("Supplier", back_populates="invoices")
+
+    # ─── Финансы ──────────────────────────────────────────────────────────
+    total_sum: Mapped[float] = mapped_column(Numeric(14, 2))
+
+    # ─── Позиции ──────────────────────────────────────────────────────────
     items: Mapped[list["InvoiceItem"]] = relationship(
+        "InvoiceItem",
         back_populates="invoice",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Invoice {self.number or self.id} от {self.date}>"
