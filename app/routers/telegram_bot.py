@@ -18,137 +18,10 @@ from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMar
 from app.routers.gpt_ocr import ocr
 from app.routers.gpt_parsing import parse
 from app.routers.fuzzy_match import fuzzy_match_product
+from app.utils.unit_converter import normalize_unit, is_compatible_unit
+from app.utils.xml_generator import build_xml
 from app.db import SessionLocal
 from app.config import settings
-
-# Built-in function instead of importing from app.utils.unit_converter
-def normalize_unit(unit_str: str) -> str:
-    """Built-in function for normalizing measurement units."""
-    if not unit_str:
-        return ""
-    
-    unit_str = unit_str.lower().strip()
-    
-    # Unit normalization dictionary (English + Indonesian)
-    aliases = {
-        # English volume units
-        "l": "l", "ltr": "l", "liter": "l", "liters": "l",
-        "ml": "ml", "milliliter": "ml", "milliliters": "ml",
-        
-        # English weight units
-        "kg": "kg", "kilo": "kg", "kilogram": "kg",
-        "g": "g", "gr": "g", "gram": "g", "grams": "g",
-        
-        # English countable units
-        "pcs": "pcs", "pc": "pcs", "piece": "pcs", "pieces": "pcs",
-        "pack": "pack", "package": "pack", "pkg": "pack",
-        "box": "box", "boxes": "box",
-        
-        # Indonesian volume units
-        "liter": "l", "lt": "l",
-        "mililiter": "ml", "mili": "ml",
-        
-        # Indonesian weight units
-        "kilogram": "kg", "kilo": "kg",
-        "gram": "g",
-        
-        # Indonesian countable units
-        "buah": "pcs", "biji": "pcs", "pcs": "pcs", "potong": "pcs",
-        "paket": "pack", "pak": "pack",
-        "kotak": "box", "dus": "box", "kardus": "box",
-        
-        # Other units
-        "gln": "gallon", "galon": "gallon",
-        "bunch": "bunch", "пучок": "bunch",
-    }
-    
-    return aliases.get(unit_str, unit_str)
-
-def is_unit_compatible(unit1: str, unit2: str) -> bool:
-    """Check if units are compatible for conversion."""
-    unit1 = normalize_unit(unit1)
-    unit2 = normalize_unit(unit2)
-    
-    # Same normalized units are always compatible
-    if unit1 == unit2:
-        return True
-    
-    # Define unit groups
-    volume_units = {"l", "ml", "gallon"}
-    weight_units = {"kg", "g"}
-    countable_units = {"pcs", "pack", "box", "bunch"}
-    
-    # Check if both units are in the same group
-    if unit1 in volume_units and unit2 in volume_units:
-        return True
-    if unit1 in weight_units and unit2 in weight_units:
-        return True
-    if unit1 in countable_units and unit2 in countable_units:
-        return False  # Consider countable units as incompatible for now
-    
-    return False
-
-# Function for creating XML
-def build_xml(data: dict) -> str:
-    """
-    Creates XML for Syrve from invoice data.
-    
-    :param data: Invoice data dictionary
-    :return: XML string
-    """
-    from xml.etree.ElementTree import Element, SubElement, tostring
-    
-    root = Element("SyrveDocument")
-    
-    if "supplier" in data:
-        SubElement(root, "Supplier").text = data["supplier"]
-    if "buyer" in data:
-        SubElement(root, "Buyer").text = data["buyer"]
-    if "date" in data:
-        SubElement(root, "Date").text = data["date"]
-    
-    items = SubElement(root, "Items")
-    for p in data.get("positions", []):
-        item = SubElement(items, "Item")
-        
-        if "name" in p:
-            SubElement(item, "Name").text = str(p["name"])
-        
-        if "quantity" in p:
-            SubElement(item, "Quantity").text = str(p["quantity"])
-        
-        if "unit" in p:
-            SubElement(item, "Unit").text = str(p.get("unit", ""))
-        
-        if "price" in p:
-            try:
-                price = float(p["price"])
-                SubElement(item, "Price").text = f"{price:.2f}"
-            except (ValueError, TypeError):
-                SubElement(item, "Price").text = "0.00"
-        
-        if "sum" in p:
-            try:
-                sum_value = float(p["sum"])
-                SubElement(item, "Sum").text = f"{sum_value:.2f}"
-            except (ValueError, TypeError):
-                SubElement(item, "Sum").text = "0.00"
-    
-    if "total_sum" in data:
-        try:
-            total = float(data["total_sum"])
-            SubElement(root, "TotalSum").text = f"{total:.2f}"
-        except (ValueError, TypeError):
-            # Calculate from positions
-            total = 0.0
-            for p in data.get("positions", []):
-                try:
-                    total += float(p.get("sum", 0)) if p.get("sum") else 0
-                except (ValueError, TypeError):
-                    pass
-            SubElement(root, "TotalSum").text = f"{total:.2f}"
-    
-    return tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
 
 logger = structlog.get_logger()
 router = Router(name=__name__)
@@ -175,6 +48,10 @@ def calculate_total_sum(positions: list) -> float:
     """Calculates total sum from all positions safely."""
     total = 0.0
     for pos in positions:
+        # Пропускаем удаленные позиции
+        if pos.get("deleted", False):
+            continue
+            
         try:
             pos_sum = float(pos.get("sum", 0)) if pos.get("sum") else 0
             total += pos_sum
@@ -211,6 +88,10 @@ def analyze_items_issues(data, products_info):
     positions = data.get("positions", [])
     
     for i, pos in enumerate(positions):
+        # Пропускаем удаленные позиции
+        if pos.get("deleted", False):
+            continue
+            
         if not pos.get("match_id"):
             issues.append({
                 "index": i+1,
@@ -231,7 +112,7 @@ def analyze_items_issues(data, products_info):
         db_unit = normalize_unit(product.unit)
         
         if invoice_unit and db_unit and invoice_unit != db_unit:
-            if is_unit_compatible(invoice_unit, db_unit):
+            if is_compatible_unit(invoice_unit, db_unit):
                 issues.append({
                     "index": i+1,
                     "invoice_item": f"{pos.get('name', '')} *{invoice_unit}*",
@@ -287,6 +168,9 @@ def make_improved_invoice_markdown(data, issues, parser_comment):
     """
     positions = data.get("positions", [])
     
+    # Пропускаем удаленные позиции при подсчете
+    active_positions = [p for p in positions if not p.get("deleted", False)]
+    
     # Create header with invoice details
     header = f"📄 *Supplier:* \"{data.get('supplier', 'Unknown')}\"  \n"
     header += f"🗓️ *Date:* {data.get('date', 'Unknown')}"
@@ -300,7 +184,7 @@ def make_improved_invoice_markdown(data, issues, parser_comment):
     header += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     
     # Count matched vs problematic items
-    matched_count = len(positions) - len(issues)
+    matched_count = len(active_positions) - len(issues)
     
     # Add statistics
     header += f"✅ *Matched items* — {matched_count} items  \n"
@@ -426,7 +310,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
             await m.answer("❌ An error occurred while displaying the invoice.")
 
 
-# ───────────────────────── callbacks ────────────────────────
+# ───────────────────────── callback: подтверждение накладной ──────────────────
 @router.callback_query(F.data == "inv_ok")
 async def cb_ok(c: CallbackQuery, state: FSMContext, bot: Bot):
     data = (await state.get_data()).get("invoice", {})
@@ -437,6 +321,11 @@ async def cb_ok(c: CallbackQuery, state: FSMContext, bot: Bot):
         await c.answer()
         return
     
+    # Фильтруем удаленные позиции перед экспортом
+    positions = data.get("positions", [])
+    active_positions = [p for p in positions if not p.get("deleted", False)]
+    data["positions"] = active_positions
+    
     try:
         xml_str = build_xml(data)
         
@@ -446,7 +335,7 @@ async def cb_ok(c: CallbackQuery, state: FSMContext, bot: Bot):
         logger.info("XML ready", xml_len=len(xml_str))
         
         # Count statistics
-        total_items = len(data.get("positions", []))
+        total_items = len(active_positions)
         matched_items = total_items - len(issues)
         
         if issues:
@@ -471,7 +360,4 @@ async def cb_ok(c: CallbackQuery, state: FSMContext, bot: Bot):
     await c.answer()
 
 
-@router.callback_query(F.data == "inv_edit")
-async def cb_edit(c: CallbackQuery):
-    await c.message.answer("✏️ Issue correction feature is under development.")
-    await c.answer()
+# Остальные импорты теперь подключаются в bot_runner.py для всех роутеров
