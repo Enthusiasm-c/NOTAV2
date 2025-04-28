@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
-
-from sqlalchemy import Column, Date, ForeignKey, Integer
+from sqlalchemy import Date, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base
+from .base import Base, IntPK
 
 
 class Invoice(Base):
@@ -13,28 +11,22 @@ class Invoice(Base):
 
     id: Mapped[IntPK]
 
-    # FK → suppliers.id
-    supplier_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("suppliers.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+    supplier_id: Mapped[int | None] = mapped_column(
+        ForeignKey("suppliers.id", ondelete="SET NULL")
     )
 
-    document_date: Mapped[date | None] = mapped_column(Date)
+    number: Mapped[str | None] = mapped_column(String(64))
+    date: Mapped[Date]
+    total_sum: Mapped[Numeric(14, 2)]
 
-    supplier: Mapped["Supplier"] = relationship(
+    supplier: Mapped["Supplier"] | None = relationship(
         "Supplier",
         back_populates="invoices",
         lazy="joined",
     )
-
     items: Mapped[list["InvoiceItem"]] = relationship(
         "InvoiceItem",
         back_populates="invoice",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"<Invoice {self.id} supplier={self.supplier_id}>"
