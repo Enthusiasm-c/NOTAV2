@@ -1,47 +1,34 @@
-# app/models/invoice_item.py
-"""
-Строка накладной (InvoiceItem)
-──────────────────────────────
-* FK на Invoice и Product
-"""
-
 from __future__ import annotations
 
-from sqlalchemy import Column, Integer, Float, String, ForeignKey
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy import ForeignKey, Float
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
 
 class InvoiceItem(Base):
+    """Позиция в накладной."""
+
     __tablename__ = "invoice_items"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    unit: Mapped[str | None] = mapped_column(String, nullable=True)
-    price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    sum: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    # ──────────── связи ────────────
     invoice_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("invoices.id"), nullable=False
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
     )
-    invoice: Mapped["Invoice"] = relationship(
-        "Invoice", back_populates="items"
-    )
-
     product_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("products.id"), nullable=True
-    )
-    product: Mapped["Product | None"] = relationship(
-        "Product", back_populates="invoice_items"
+        ForeignKey("products.id", ondelete="SET NULL"), index=True
     )
 
-    # ─────────── удобство ───────────
+    quantity: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)
+
+    # --- relationships -------------------------------------------------
+    invoice: Mapped["Invoice"] = relationship(back_populates="items")
+    product: Mapped["Product | None"] = relationship(back_populates="items")
+
     def __repr__(self) -> str:  # pragma: no cover
         return (
-            f"<InvoiceItem id={self.id} name={self.name!r} "
-            f"qty={self.quantity} unit={self.unit}>"
+            f"<Item inv={self.invoice_id} prod={self.product_id} "
+            f"qty={self.quantity} price={self.price}>"
         )
