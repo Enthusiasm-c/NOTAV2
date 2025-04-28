@@ -1,28 +1,59 @@
-"""Общий declarative-foundation (SQLAlchemy 2.0)."""
+# app/models/base.py
+"""
+Общий «скелет» для всех ORM-моделей Nota V2.
+
+* Base — корневой класс declarative-моделей.
+* int_pk() — небольшая утилита, дающая стандартное
+  авто-инкрементное `INTEGER PRIMARY KEY`.
+"""
+
 from __future__ import annotations
 
-from sqlalchemy.orm import DeclarativeBase, registry, Mapped
-from sqlalchemy import MetaData
+from typing import Any
 
-# единая naming-convention — Alembic любит
-_naming = MetaData(
-    naming_convention={
-        "ix": "ix_%(column_0_label)s",
-        "uq": "uq_%(table_name)s_%(column_0_name)s",
-        "pk": "pk_%(table_name)s",
-        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-    }
+from sqlalchemy import Integer
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    declared_attr,
+    mapped_column,
 )
 
-mapper_registry = registry(metadata=_naming)
+
+class _Base(DeclarativeBase):
+    """Базовый declarative-класс без __tablename__."""
+
+    pass
 
 
-class Base(DeclarativeBase):
-    registry = mapper_registry
+class Base(_Base):
+    """
+    Общий предок **всех** таблиц.
 
-    # удобный to-dict для дебага
-    def as_dict(self) -> dict[str, str]:
-        return {
-            k: getattr(self, k)
-            for k in self.__mapper__.columns.keys()  # noqa: SLF001
-        }
+    Автоматически формирует `__tablename__` по имени
+    класса в snake_case (ProductCategory → product_category).
+    """
+
+    __abstract__ = True  # не создавать собственную таблицу
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:  # type: ignore[override]
+        name = cls.__name__
+        snake = "".join(
+            f"_{c.lower()}" if c.isupper() else c for c in name
+        ).lstrip("_")
+        return snake
+
+
+def int_pk() -> Mapped[int]:
+    """
+    Быстрый способ объявить «простой» PK:
+
+    ```python
+    id: Mapped[int] = int_pk()
+    ```
+    """
+    return mapped_column(Integer, primary_key=True, autoincrement=True)  # type: ignore[return-value]
+
+
+__all__: list[str] = ["Base", "int_pk"]
