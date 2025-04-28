@@ -1,18 +1,17 @@
-# app/routers/gpt_ocr.py
 """
-OCR-модуль Nota V2
+OCR module for Nota V2
 ──────────────────
-* Загружает фото из Telegram.
-* Отправляет base64-картинку в OpenAI Vision (gpt-4o-mini по-умолчанию).
-* Возвращает raw-text или возбуждает исключение — чтобы бот показал
-  понятную ошибку, а не «заглушку».
+* Downloads photo from Telegram.
+* Sends base64-encoded image to OpenAI Vision (gpt-4o-mini by default).
+* Returns raw-text or raises an exception — so the bot can show
+  a clear error, not a "stub".
 
-Ифы-фоллбэки «вернуть stub» убраны: теперь при любой сетевой / JSON-ошибке
-вы увидите stack-trace в journalctl.
+If-fallbacks "return stub" are removed: now with any network / JSON error
+you will see a stack-trace in journalctl.
 
-Требует:
-    OPENAI_API_KEY          — обязательный
-    GPT_OCR_URL             — по-умолчанию https://api.openai.com/v1/chat/completions
+Requires:
+    OPENAI_API_KEY          — mandatory
+    GPT_OCR_URL             — default is https://api.openai.com/v1/chat/completions
 """
 
 from __future__ import annotations
@@ -22,45 +21,50 @@ import httpx
 import structlog
 from aiogram import Bot
 from aiogram.types import File
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from app.config import settings
 
 logger = structlog.get_logger()
 
 
-# ───────── app/routers/gpt_ocr.py  (изменилась лишь эта функция) ─────────
+# ───────── app/routers/gpt_ocr.py ─────────────────────────────────────────
 async def _tg_download(bot: Bot, file_id: str) -> bytes:
     """
-    Скачиваем файл из Telegram и возвращаем bytes.
+    Download file from Telegram and return bytes.
 
     aiogram-3:
         tg_file = await bot.get_file(file_id)
         stream  = await bot.download_file(tg_file.file_path)   # coroutine → BytesIO
     """
     tg_file = await bot.get_file(file_id)
-    stream  = await bot.download_file(tg_file.file_path)  # <-- await, без  async with
+    stream  = await bot.download_file(tg_file.file_path)  # <-- await, without async with
     return stream.read()                                  # BytesIO → bytes
 
 
-async def ocr(file_id: str, bot: Bot) -> str:
-    """
-    Основной вызов: telegram-file-id → raw text.
-
-    Исключения не «глотаются» — пусть всплывают до хендлера,
-    чтобы их логировал и Telegram-бот, и systemd-journal.
-    """
+@retry(
+    # Retry only on 5xx and network errors
+    retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.NetworkError)),
+    wait=wait_exponential_jitter(initial=1, max=30),  # 1s, 2s, 4s... + jitter
+    stop=stop_after_attempt(6),                       # ≤ 6 attempts
+    reraise=True,
+    before_sleep=lambda retry_state: logger.warning(
+        f"OCR API call failed, retrying in {retry_state.next_action.sleep} seconds "
+        f"(attempt {retry_state.attempt_number}/{6})",
+        error=str(retry_state.outcome.exception())
+    ),
+)
+async def _call_openai_vision(image_bytes: bytes) -> str:
+    """Call OpenAI Vision API with retry logic for robustness against temporary failures."""
     if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY не задан — OCR невозможен")
-
-    logger.info("OCR start", file_id=file_id)
-    image_bytes = await _tg_download(bot, file_id)
+        raise RuntimeError("OPENAI_API_KEY not set – OCR is not possible")
 
     b64img = base64.b64encode(image_bytes).decode()
     payload = {
         "model": "gpt-4o-mini",
         "temperature": 0,
         "max_tokens": 4096,
-        # response_format — просим только текст
+        # response_format — ask for text only
         "messages": [
             {
                 "role": "user",
@@ -72,8 +76,8 @@ async def ocr(file_id: str, bot: Bot) -> str:
                     {
                         "type": "text",
                         "text": (
-                            "Сделай OCR. Верни чистый текст без комментариев, "
-                            "языка разметки или JSON."
+                            "Do OCR. Return clean text without comments, "
+                            "markup or JSON."
                         ),
                     },
                 ],
@@ -86,28 +90,35 @@ async def ocr(file_id: str, bot: Bot) -> str:
         "Content-Type": "application/json",
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
-            resp.raise_for_status()
-    except httpx.HTTPStatusError as err:
-        logger.error(
-            "OCR HTTP error",
-            status=err.response.status_code,
-            body=err.response.text[:300],
-        )
-        raise
-    except Exception as exc:
-        logger.exception("OCR transport error", exc_info=exc)
-        raise
+    async with httpx.AsyncClient(timeout=60) as client:  # Increased timeout
+        resp = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
+        resp.raise_for_status()  # Will raise HTTPStatusError for 4xx/5xx responses
+        data = resp.json()
 
     try:
         raw_text = (
-            resp.json()["choices"][0]["message"]["content"].strip()
+            data["choices"][0]["message"]["content"].strip()
         )
     except (KeyError, ValueError) as exc:
-        logger.error("OCR JSON structure unexpected", body=resp.text[:400])
-        raise RuntimeError("OpenAI вернул некорректный ответ") from exc
+        logger.error("OCR JSON structure unexpected", body=data)
+        raise RuntimeError("OpenAI returned invalid response") from exc
 
     logger.info("OCR done", snippet=raw_text[:120])
     return raw_text
+
+
+async def ocr(file_id: str, bot: Bot) -> str:
+    """
+    Main call: telegram-file-id → raw text.
+
+    Exceptions are not "swallowed" — let them bubble up to the handler,
+    so they can be logged by both the Telegram bot and systemd-journal.
+    """
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY not set – OCR is not possible")
+
+    logger.info("OCR start", file_id=file_id)
+    image_bytes = await _tg_download(bot, file_id)
+    
+    # Call OpenAI Vision API with retry
+    return await _call_openai_vision(image_bytes)
