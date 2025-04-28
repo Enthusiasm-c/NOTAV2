@@ -1,15 +1,16 @@
+# app/models/supplier.py
 from __future__ import annotations
 
-from sqlalchemy import Integer, String, ForeignKey
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base
+from .base import Base, IntPK  # ← импортируем alias первичного ключа
 
 
 class Supplier(Base):
     __tablename__ = "suppliers"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[IntPK]                           # ← раньше здесь был mapped_column(Integer,…
 
     # «человеческое» название поставщика
     name: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
