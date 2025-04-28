@@ -1,32 +1,23 @@
 """
-app.models package
-──────────────────
-Импортирует все модели одним махом:
+Модели SQLAlchemy ORM для Nota V2.
 
-    from app.models import Product, Supplier, Base, …
+Все модели собраны здесь, чтобы один общий импорт:
+    from app.models import Supplier, Product  # и т.д.
 
-Важно: **порядок** имеет значение – зависимые классы идут ниже базовых.
+По-прежнему можно импортировать каждую модель отдельно:
+    from app.models.product import Product
 """
 
 from __future__ import annotations
 
-from app.config import settings  # noqa: F401
+# Базовый класс для всех моделей
+from .base import Base                      # noqa: F401
 
-from .base import Base           # noqa: F401
-from .supplier import Supplier   # noqa: F401
-from .product import Product     # noqa: F401
+# Первичные таблицы (без внешних ключей)
+from .supplier import Supplier              # noqa: F401
+from .product import Product                # noqa: F401
+
+# Вторичные (подчиненные) таблицы
+from .invoice import Invoice                # noqa: F401
+from .invoice_item import InvoiceItem       # noqa: F401
 from .product_name_lookup import ProductNameLookup  # noqa: F401
-from .invoice import Invoice     # noqa: F401
-from .invoice_item import InvoiceItem  # noqa: F401
-from .invoice_name_lookup import InvoiceNameLookup  # ← новая модель  # noqa: F401
-
-__all__: list[str] = [
-    "settings",
-    "Base",
-    "Supplier",
-    "Product",
-    "ProductNameLookup",
-    "Invoice",
-    "InvoiceItem",
-    "InvoiceNameLookup",
-]
