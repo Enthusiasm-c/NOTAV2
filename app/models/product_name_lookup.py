@@ -5,23 +5,32 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, IntPK
 
-__all__ = ["ProductNameLookup"]
 
+class ProductNameLookup(Base):
+    """
+    «Словарь» альтернативных названий товара, чтобы находить
+    позиции счёта-фактуры по разным написаниям.
 
-class ProductNameLookup(Base, IntPK):
+    • `name`        – вариант написания, уникален  
+    • `product_id`  – FK → products.id (ON DELETE CASCADE)  
+    """
+
     __tablename__ = "product_name_lookup"
 
-    # сам «псевдоним»
-    alias: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
-
-    # FK на основной товар
-    product_id: Mapped[int] = mapped_column(
+    id: Mapped[int] = IntPK
+    product_id: Mapped[str] = mapped_column(
         ForeignKey("products.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
     )
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
 
-    product: Mapped["Product"] = relationship(back_populates="name_lookups")
+    # ───── связи ────────────────────────────────────────────────────────────
+    product: Mapped["Product"] = relationship(
+        "Product",
+        back_populates="name_lookups",
+    )
 
+    # ───── вспомогательные методы ──────────────────────────────────────────
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<Lookup {self.alias!r} → {self.product_id}>"
+        return f"<Lookup {self.name!r} → {self.product_id}>"
