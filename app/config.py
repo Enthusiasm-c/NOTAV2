@@ -7,6 +7,13 @@ Nota V2 — центральная конфигурация проекта
 * Значения берутся из файла `.env` или переменных окружения.
 * Безопасные дефолты позволяют запускать приложение и CI-pipeline
   даже без настоящих секретов.
+
+Изменения 2025-04-28
+────────────────────
+1. Добавлено поле ``log_level`` (DEBUG / INFO / …).
+2. В ``model_config`` выставлено ``extra="ignore"`` — лишние ключи .env
+   больше не валят сервис (удобно на MVP).
+3. Логика и алиасы прежних полей сохранены.
 """
 
 from __future__ import annotations
@@ -31,15 +38,11 @@ class Settings(BaseSettings):
     )
 
     # ───────────────────────── OpenAI / GPT ────────────────────────────
-    openai_api_key: str | None = Field(
-        None, alias="OPENAI_API_KEY"
-    )
+    openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
     gpt_ocr_url: str = Field(
         "https://api.openai.com/v1/chat/completions", alias="GPT_OCR_URL"
     )
-    gpt_parsing_url: str | None = Field(
-        None, alias="GPT_PARSING_URL"
-    )
+    gpt_parsing_url: str | None = Field(None, alias="GPT_PARSING_URL")
 
     # ───────────────────────────── Syrve API ───────────────────────────
     syrve_server_url: str = Field(
@@ -65,24 +68,26 @@ class Settings(BaseSettings):
     )
 
     # ────────────────────────── Алгоритмы ──────────────────────────────
-    fuzzy_threshold: float = Field(
-        0.85, alias="FUZZY_THRESHOLD"
-    )
+    fuzzy_threshold: float = Field(0.85, alias="FUZZY_THRESHOLD")
+
+    # ────────────────────────── Логирование ────────────────────────────
+    log_level: str = Field("INFO", alias="LOG_LEVEL")  # NEW
 
     # ─────────────────── pydantic-settings config ──────────────────────
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",              # NEW — неизвестные ключи безопасно игнорируем
     )
 
-    # ───────────────────── helper-aliases (legacy) ─────────────────────
+    # ───────────────────── helper-alias (legacy) ───────────────────────
     @property
-    def syrve_url(self) -> str:  # поддержка старого имени
+    def syrve_url(self) -> str:        # поддержка старого имени
         return self.syrve_server_url
 
     @property
-    def db_url(self) -> str:     # поддержка прежних импортов
+    def db_url(self) -> str:           # поддержка прежних импортов
         return self.database_url
 
 
