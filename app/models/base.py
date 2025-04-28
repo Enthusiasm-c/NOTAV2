@@ -1,18 +1,13 @@
-"""
-Общий базовый класс + миксин с int-PK
-"""
-
 from __future__ import annotations
 
 from sqlalchemy import Integer
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import declarative_base, Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """Общий declarative-base для всех моделей"""
-    repr_cols_num = 3  # для __repr__ в MappedAsDataclass (если понадобится)
-
-
-class IntPK:  # mixin, НЕ наследуемся от Base!
-    """Добавляет авто-инкрементный int primary-key"""
+# --------------------------------------------------------------------------- #
+#  Миксин для surrogate-PK: id INTEGER PRIMARY KEY AUTOINCREMENT
+# --------------------------------------------------------------------------- #
+class IntPK:
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+# Базовый declarative-класс для всех ORM-моделей
+Base = declarative_base()

@@ -1,25 +1,30 @@
 from __future__ import annotations
-
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, String
+from sqlalchemy import ForeignKey, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, IntPK
+from .base import Base
 
 
-class InvoiceItem(Base, IntPK):
+class InvoiceItem(Base):
     __tablename__ = "invoice_items"
 
-    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"))
-    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
+    # составной первичный ключ
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"), primary_key=True
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), primary_key=True
+    )
 
-    name: Mapped[str] = mapped_column(String)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
-    unit: Mapped[str] = mapped_column(String(16))
-    price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    sum: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    price:    Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    sum:      Mapped[Decimal] = mapped_column(Numeric(14, 2))
 
-    # отношения
+    # --- relationships ------------------------------------------------------ #
     invoice: Mapped["Invoice"] = relationship(back_populates="items")
     product: Mapped["Product"] = relationship(back_populates="invoice_items")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Item inv={self.invoice_id} prod={self.product_id}>"
