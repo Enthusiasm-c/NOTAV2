@@ -23,7 +23,8 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from app.config import settings
-from app.routers.telegram_bot import router  # router содержит все хендлеры
+from app.routers.telegram_bot import router as main_router
+from app.routers.issue_editor import router as editor_router
 
 # ───────────────────────  Логирование  ──────────────────────────
 #
@@ -57,7 +58,10 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_token)
     storage = MemoryStorage()  # Хранилище для FSM
     dp = Dispatcher(storage=storage)
-    dp.include_router(router)
+    
+    # Подключаем все роутеры
+    dp.include_router(main_router)
+    dp.include_router(editor_router)  # Новый роутер для редактирования спорных позиций
 
     # Очистка вебхука перед запуском long polling
     logger.info("Очистка вебхука...")
