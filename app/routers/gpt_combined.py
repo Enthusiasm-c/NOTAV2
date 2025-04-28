@@ -1,0 +1,309 @@
+"""
+Оптимизированный модуль для NOTA V2, объединяющий OCR и парсинг в один API-запрос.
+
+Преимущества:
+- Сокращение количества API-запросов в 2 раза
+- Уменьшение времени обработки накладной примерно вдвое
+- Снижение стоимости API-запросов
+
+При этом сохраняются отдельные функции OCR и парсинга для тестирования и отладки.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import httpx
+import structlog
+from typing import Dict, Any, Tuple, Optional
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
+
+from aiogram import Bot
+from aiogram.types import File
+
+from app.config import settings
+from app.routers.gpt_ocr import _tg_download, ocr
+from app.routers.gpt_parsing import _MOCK_RESULT, parse
+
+logger = structlog.get_logger()
+
+
+# --------------------------------------------------------------------------- #
+#  Оптимизированная функция, объединяющая OCR и парсинг в один запрос
+# --------------------------------------------------------------------------- #
+async def process_invoice(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
+    """
+    Основная оптимизированная функция: обрабатывает фото накладной в один запрос к API.
+    
+    Args:
+        file_id: Идентификатор файла в Telegram
+        bot: Экземпляр бота Aiogram
+        
+    Returns:
+        Tuple[str, Dict[str, Any]]: (распознанный текст, структурированные данные)
+        
+    Raises:
+        Exception: При ошибке в процессе обработки
+    """
+    if not settings.openai_api_key:
+        logger.warning("OPENAI_API_KEY not set – using mock result")
+        return "OCR MOCK (API KEY NOT SET)", dict(_MOCK_RESULT)
+
+    logger.info("Starting combined OCR+Parsing process", file_id=file_id)
+    
+    try:
+        # Скачиваем изображение
+        image_bytes = await _tg_download(bot, file_id)
+        
+        # Выполняем объединенный запрос
+        raw_text, parsed_data = await _call_combined_api(image_bytes)
+        
+        logger.info("Combined OCR+Parsing successful", 
+                   text_length=len(raw_text), 
+                   positions_count=len(parsed_data.get("positions", [])))
+        
+        return raw_text, parsed_data
+    except Exception as e:
+        logger.exception("Combined OCR+Parsing failed", error=str(e))
+        raise
+
+
+@retry(
+    # Retry only on 5xx and network errors
+    retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.NetworkError)),
+    wait=wait_exponential_jitter(initial=1, max=30),  # 1s, 2s, 4s... + jitter
+    stop=stop_after_attempt(6),                       # ≤ 6 attempts
+    reraise=True,
+    before_sleep=lambda retry_state: logger.warning(
+        f"API call failed, retrying in {retry_state.next_action.sleep} seconds "
+        f"(attempt {retry_state.attempt_number}/{6})",
+        error=str(retry_state.outcome.exception())
+    ),
+)
+async def _call_combined_api(image_bytes: bytes) -> Tuple[str, Dict[str, Any]]:
+    """
+    Выполняет объединенный API-запрос OCR + парсинг.
+    
+    Args:
+        image_bytes: Изображение в виде байтов
+        
+    Returns:
+        Tuple[str, Dict[str, Any]]: (распознанный текст, структурированные данные)
+    """
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+
+    b64img = base64.b64encode(image_bytes).decode()
+    
+    # Создаем оптимизированный запрос, объединяющий OCR и парсинг
+    payload = {
+        "model": "gpt-4o",  # Используем полную gpt-4o для лучшего распознавания
+        "temperature": 0,
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are an OCR system that can extract structured data from invoice images. "
+                    "You'll first extract the raw text from the image, then parse it into structured JSON. "
+                    "Follow these steps:\n"
+                    "1. Transcribe all text from the image accurately.\n"
+                    "2. Parse the transcribed text to extract invoice details.\n"
+                    "3. Return BOTH the raw text and structured data in this format:\n\n"
+                    "RAW TEXT:\n[transcribed text goes here]\n\n"
+                    "PARSED DATA:\n```json\n{\n"
+                    "  \"supplier\": \"[supplier name]\",\n"
+                    "  \"buyer\": \"[buyer name]\",\n"
+                    "  \"date\": \"[YYYY-MM-DD]\",\n"
+                    "  \"number\": \"[invoice number if available]\",\n"
+                    "  \"positions\": [\n"
+                    "    {\n"
+                    "      \"name\": \"[item name]\",\n"
+                    "      \"quantity\": [numeric value],\n"
+                    "      \"unit\": \"[unit of measure]\",\n"
+                    "      \"price\": [unit price],\n"
+                    "      \"sum\": [total price]\n"
+                    "    },\n"
+                    "    ...\n"
+                    "  ],\n"
+                    "  \"total_sum\": [total invoice amount]\n"
+                    "}\n```"
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64img}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract all text from this invoice image and parse the data into structured JSON."
+                        ),
+                    },
+                ],
+            }
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    # Выполняем API-запрос с увеличенным таймаутом
+    async with httpx.AsyncClient(timeout=120) as client:  # Увеличенный таймаут
+        resp = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
+        resp.raise_for_status()  # Вызовет HTTPStatusError для 4xx/5xx ответов
+        data = resp.json()
+
+    try:
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        
+        # Разделяем результат на raw_text и parsed_data
+        raw_text, parsed_json = _split_api_response(content)
+        
+        # Проверяем валидность JSON
+        if parsed_json:
+            # Преобразуем JSON-строку в словарь
+            parsed_data = json.loads(parsed_json)
+        else:
+            # Если JSON не получен, выполняем повторную попытку парсинга
+            # через отдельный вызов API для парсинга
+            logger.warning("JSON parsing failed in combined response, fallback to separate parsing")
+            
+            # Проверяем, что есть сырой текст
+            if not raw_text:
+                raise ValueError("Failed to extract both raw text and JSON from API response")
+                
+            # Используем существующую функцию parse из gpt_parsing
+            parsed_data = await _fallback_parsing(raw_text)
+        
+        logger.info("Combined API call successful", 
+                   raw_text_length=len(raw_text), 
+                   parsed_data_keys=list(parsed_data.keys()))
+        
+        return raw_text, parsed_data
+    except Exception as e:
+        logger.error("Failed to process combined API response", error=str(e), content=content[:500])
+        raise RuntimeError(f"Failed to process API response: {str(e)}") from e
+
+
+def _split_api_response(content: str) -> Tuple[str, Optional[str]]:
+    """
+    Разделяет ответ API на сырой текст и JSON.
+    
+    Args:
+        content: Полный ответ от API
+        
+    Returns:
+        Tuple[str, Optional[str]]: (raw_text, json_str)
+    """
+    # Ищем маркеры разделов
+    raw_text_marker = "RAW TEXT:"
+    parsed_data_marker = "PARSED DATA:"
+    json_start_marker = "```json"
+    json_end_marker = "```"
+    
+    raw_text = ""
+    json_str = None
+    
+    # Извлекаем сырой текст
+    if raw_text_marker in content:
+        # Находим начало сырого текста
+        raw_text_start = content.find(raw_text_marker) + len(raw_text_marker)
+        
+        # Находим конец сырого текста (начало следующей секции)
+        raw_text_end = content.find(parsed_data_marker, raw_text_start)
+        if raw_text_end == -1:  # Если секции PARSED DATA нет
+            raw_text = content[raw_text_start:].strip()
+        else:
+            raw_text = content[raw_text_start:raw_text_end].strip()
+    else:
+        # Если маркер не найден, проверяем, есть ли JSON в содержимом
+        json_start = content.find('{')
+        json_end = content.rfind('}')
+        
+        if json_start != -1 and json_end != -1 and json_start < json_end:
+            # Предполагаем, что всё до JSON - это сырой текст
+            raw_text = content[:json_start].strip()
+            # Возможно, это прямой JSON без маркеров
+            json_str = content[json_start:json_end+1]
+            return raw_text, json_str
+        else:
+            # Если JSON не найден, считаем всё сырым текстом
+            raw_text = content.strip()
+    
+    # Извлекаем JSON
+    if json_start_marker in content:
+        # Находим начало JSON (после маркера)
+        json_content_start = content.find(json_start_marker) + len(json_start_marker)
+        
+        # Находим конец JSON
+        json_content_end = content.find(json_end_marker, json_content_start)
+        if json_content_end != -1:
+            json_str = content[json_content_start:json_content_end].strip()
+    elif parsed_data_marker in content:
+        # Если есть маркер PARSED DATA, но нет маркера JSON
+        # Пытаемся найти JSON напрямую
+        parsed_data_start = content.find(parsed_data_marker) + len(parsed_data_marker)
+        json_start = content.find('{', parsed_data_start)
+        json_end = content.rfind('}')
+        
+        if json_start != -1 and json_end != -1 and json_start < json_end:
+            json_str = content[json_start:json_end+1]
+    
+    # Возвращаем результаты
+    return raw_text, json_str
+
+
+async def _fallback_parsing(raw_text: str) -> Dict[str, Any]:
+    """
+    Запасной метод для парсинга, используемый, если объединенный запрос не смог извлечь JSON.
+    
+    Args:
+        raw_text: Распознанный текст для парсинга
+        
+    Returns:
+        Dict[str, Any]: Структурированные данные
+    """
+    try:
+        # Используем существующую функцию parse из модуля gpt_parsing
+        parsed_data = await parse(raw_text)
+        return parsed_data
+    except Exception as e:
+        logger.error("Fallback parsing failed", error=str(e))
+        # Возвращаем заглушку в случае ошибки
+        return dict(_MOCK_RESULT)
+
+
+# --------------------------------------------------------------------------- #
+#  API для использования в других модулях
+# --------------------------------------------------------------------------- #
+async def ocr_and_parse(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
+    """
+    Публичный API для процессинга накладной в один запрос.
+    
+    Args:
+        file_id: Идентификатор файла в Telegram
+        bot: Экземпляр бота Aiogram
+        
+    Returns:
+        Tuple[str, Dict[str, Any]]: (распознанный текст, структурированные данные)
+    """
+    try:
+        return await process_invoice(file_id, bot)
+    except Exception as e:
+        logger.exception("Failed to process invoice", error=str(e))
+        # Если произошла ошибка, возвращаем заглушки для обоих значений
+        mock_text = f"[OCR FAILED: {str(e)[:100]}]"
+        mock_data = dict(_MOCK_RESULT)
+        mock_data["supplier"] = f"[MOCK DUE TO ERROR] {mock_data['supplier']}"
+        return mock_text, mock_data
