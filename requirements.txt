@@ -13,3 +13,4 @@ openai>=1.14
 aiofiles
 structlog
 alembic>=1.13
+psycopg2-binary>=2.9
