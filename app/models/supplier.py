@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-from sqlalchemy import String, Integer
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, IntPK
 
 
 class Supplier(Base):
-    """Поставщик товаров."""
+    __tablename__ = "suppliers"          # ←  ОБЯЗАТЕЛЬНО
 
-    # ─── PK ────────────────────────────────────────────────────────────────
-    id: Mapped[IntPK]  # type: ignore[valid-type]
+    id: Mapped[IntPK]                    # type: ignore[valid-type]
 
-    # ─── Данные поставщика ────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     code: Mapped[str | None] = mapped_column(String(64), unique=True)
 
-    # ─── Связи ─────────────────────────────────────────────────────────────
     invoices: Mapped[list["Invoice"]] = relationship(
         "Invoice",
         back_populates="supplier",
