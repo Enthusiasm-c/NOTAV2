@@ -225,11 +225,11 @@ def make_issue_list_keyboard(issues: List[Dict[str, Any]]) -> InlineKeyboardMark
 
 
 def make_item_edit_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для редактирования позиции."""
+    """Создает клавиатуру для редактирования позиции с обновленными иконками."""
     keyboard = [
         # Первый ряд кнопок - основные действия
         [
-            InlineKeyboardButton(text="🏷️ Товар", callback_data=f"{CB_ACTION_PREFIX}name"),
+            InlineKeyboardButton(text="📦 Товар", callback_data=f"{CB_ACTION_PREFIX}name"),
             InlineKeyboardButton(text="🔢 Кол-во", callback_data=f"{CB_ACTION_PREFIX}qty"),
             InlineKeyboardButton(text="📏 Ед.изм", callback_data=f"{CB_ACTION_PREFIX}unit"),
         ],
@@ -323,9 +323,9 @@ def make_unit_select_keyboard(units: List[str]) -> InlineKeyboardMarkup:
 
 
 def make_confirm_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для финального подтверждения."""
+    """Создает клавиатуру для финального подтверждения с обновленными кнопками."""
     keyboard = [
-        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="inv_ok")],
+        [InlineKeyboardButton(text="✅ Подтвердить и отправить", callback_data="inv_ok")],
         [InlineKeyboardButton(text="◀️ Вернуться к правкам", callback_data=CB_BACK)]
     ]
     
@@ -368,8 +368,22 @@ async def format_issue_for_edit(issue: Dict[str, Any]) -> str:
     # Тип проблемы
     issue_type = issue.get("issue", "Неизвестная проблема")
     
+    # Определяем эмодзи в зависимости от типа проблемы
+    if "Not in database" in issue_type:
+        emoji = "🔴"
+        issue_description = "Товар не найден в базе"
+    elif "incorrect match" in issue_type:
+        emoji = "🟡"
+        issue_description = "Возможно неверное сопоставление"
+    elif "Unit" in issue_type:
+        emoji = "🟠"
+        issue_description = "Несоответствие единиц измерения"
+    else:
+        emoji = "⚠️"
+        issue_description = issue_type
+    
     # Форматируем детали позиции
-    formatted = f"🔍 *Редактирование позиции*\n\n"
+    formatted = f"{emoji} *Редактирование позиции*\n\n"
     formatted += f"*Наименование:* {name}\n"
     formatted += f"*Количество:* {quantity} {unit}\n"
     
@@ -380,7 +394,7 @@ async def format_issue_for_edit(issue: Dict[str, Any]) -> str:
         formatted += f"*Сумма:* {sum_val:,.2f}\n"
     
     # Добавляем информацию о проблеме
-    formatted += f"\n*Проблема:* {issue_type}\n"
+    formatted += f"\n*Проблема:* {issue_description}\n"
     
     # Если есть информация о товаре в базе, добавляем ее
     if product := issue.get("product"):
@@ -388,84 +402,100 @@ async def format_issue_for_edit(issue: Dict[str, Any]) -> str:
         formatted += f"*→ Наименование:* {product.name}\n"
         formatted += f"*→ Единица измерения:* {product.unit}\n"
     
+    # Добавляем инструкцию по действиям
+    formatted += f"\nВыберите действие для исправления проблемы:"
+    
     return formatted
 
 
+# Функция для форматирования финального вида накладной с использованием нового markdown модуля
 async def format_final_invoice(
     invoice_data: Dict[str, Any], 
     original_issues: List[Dict[str, Any]],
     fixed_issues: Dict[int, Dict[str, Any]]
 ) -> str:
     """
-    Форматирует финальный вид накладной с выделением исправленных позиций.
+    Форматирует финальный вид накладной с использованием улучшенного markdown.
+    
+    Интегрирует функцию make_final_preview из utils.markdown для создания красивой сводки.
     """
-    result = f"📦 *Поставщик:* {invoice_data.get('supplier', 'Неизвестный')}\n"
-    result += f"📅 *Дата:* {invoice_data.get('date', 'Не указана')}"
-    
-    if invoice_number := invoice_data.get('number'):
-        result += f"   № {invoice_number}"
-    
-    result += "\n\n"
-    
-    # Собираем все позиции с отметками об исправлениях
-    positions = invoice_data.get("positions", [])
-    total_sum = 0
-    fixed_count = len(fixed_issues)
-    
-    result += f"📋 *Позиции ({len(positions)} шт.):*\n"
-    
-    for i, pos in enumerate(positions):
-        # Проверяем, была ли позиция в списке проблемных
-        is_issue = any(i == issue.get("index", 0) - 1 for issue in original_issues)
-        was_fixed = i in fixed_issues
+    try:
+        from app.utils.markdown import make_final_preview
+        # Используем новую функцию форматирования
+        return make_final_preview(invoice_data, original_issues, fixed_issues)
+    except ImportError:
+        # Если модуль недоступен, используем старый формат
+        result = f"📄 *Supplier:* \"{invoice_data.get('supplier', 'Unknown')}\"  \n"
+        result += f"🗓️ *Date:* {invoice_data.get('date', 'Unknown')}"
         
-        name = pos.get("name", "")
-        quantity = pos.get("quantity", 0)
-        unit = pos.get("unit", "")
-        price = pos.get("price", 0)
-        sum_val = pos.get("sum", 0) if pos.get("sum") else (price * float(quantity) if price else 0)
+        if invoice_number := invoice_data.get('number'):
+            result += f"  № {invoice_number}"
         
-        # Добавляем соответствующую отметку
-        if was_fixed:
-            prefix = "✅ "  # Исправлено
-        elif is_issue:
-            prefix = "⚠️ "  # Проблема не исправлена
-        else:
-            prefix = "• "   # Обычная позиция
+        result += "\n\n"
         
-        # Форматируем строку позиции
-        pos_str = f"{prefix}{name}, {quantity} {unit}"
-        if price:
-            pos_str += f" по {price:,.2f}"
-        if sum_val:
-            pos_str += f" = {sum_val:,.2f}"
+        # Собираем все позиции с отметками об исправлениях
+        positions = invoice_data.get("positions", [])
+        total_sum = 0
+        fixed_count = len(fixed_issues)
         
-        result += f"{pos_str}\n"
+        result += f"📋 *Позиции ({len(positions)} шт.):*\n"
         
-        # Увеличиваем общую сумму
-        try:
-            total_sum += float(sum_val)
-        except (ValueError, TypeError):
-            pass
-    
-    # Добавляем итоговую сумму
-    result += f"\n💰 *Итоговая сумма:* {total_sum:,.2f}\n"
-    
-    # Добавляем статистику по исправлениям
-    if fixed_count > 0:
-        result += f"\n✅ Исправлено позиций: {fixed_count}"
-    
-    remaining_issues = len(original_issues) - fixed_count
-    if remaining_issues > 0:
-        result += f"\n⚠️ Осталось проблем: {remaining_issues}"
-    
-    return result
+        for i, pos in enumerate(positions):
+            # Пропускаем удаленные позиции
+            if pos.get("deleted", False):
+                continue
+                
+            # Проверяем, была ли позиция в списке проблемных
+            is_issue = any(i == issue.get("index", 0) - 1 for issue in original_issues)
+            was_fixed = i in fixed_issues
+            
+            name = pos.get("name", "")
+            quantity = pos.get("quantity", 0)
+            unit = pos.get("unit", "")
+            price = pos.get("price", 0)
+            sum_val = pos.get("sum", 0) if pos.get("sum") else (price * float(quantity) if price else 0)
+            
+            # Добавляем соответствующую отметку
+            if was_fixed:
+                prefix = "✅ "  # Исправлено
+            elif is_issue:
+                prefix = "⚠️ "  # Проблема не исправлена
+            else:
+                prefix = "• "   # Обычная позиция
+            
+            # Форматируем строку позиции
+            pos_str = f"{prefix}{name}, {quantity} {unit}"
+            if price:
+                pos_str += f" по {price:,.2f}"
+            if sum_val:
+                pos_str += f" = {sum_val:,.2f}"
+            
+            result += f"{pos_str}\n"
+            
+            # Увеличиваем общую сумму
+            try:
+                total_sum += float(sum_val)
+            except (ValueError, TypeError):
+                pass
+        
+        # Добавляем итоговую сумму
+        result += f"\n💰 *Итоговая сумма:* {total_sum:,.2f}\n"
+        
+        # Добавляем статистику по исправлениям
+        if fixed_count > 0:
+            result += f"\n✅ Исправлено позиций: {fixed_count}"
+        
+        remaining_issues = len(original_issues) - fixed_count
+        if remaining_issues > 0:
+            result += f"\n⚠️ Осталось проблем: {remaining_issues}"
+        
+        return result
 
+# Дополнение файла issue_editor.py - обработчики событий
 
-# ───────────────────────── Router & Handlers ────────────────────────
+# ───────────────────────── handlers ─────────────────────────
 router = Router(name="issue_editor")
 
-# ───────────────────────── Колбэк "Fix Issues" ────────────────────────
 @router.callback_query(Text("inv_edit"))
 async def cb_start_fix(c: CallbackQuery, state: FSMContext):
     """Обработчик кнопки 'Fix Issues' - начало процесса редактирования."""
@@ -483,17 +513,22 @@ async def cb_start_fix(c: CallbackQuery, state: FSMContext):
     await state.update_data(current_issues=issues, fixed_issues={})
     await state.set_state(InvoiceEditStates.issue_list)
     
-    # Показываем список проблемных позиций
-    message = "Выберите позицию для исправления:\n\n"
-    for i, issue in enumerate(issues):
-        original = issue.get("original", {})
-        name = original.get("name", "Позиция")
-        quantity = original.get("quantity", 0)
-        unit = original.get("unit", "")
-        
-        issue_type = issue.get("issue", "Проблема")
-        
-        message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+    # Пытаемся использовать новый формат отображения списка проблем
+    try:
+        from app.utils.markdown import make_issue_list
+        message = make_issue_list(issues)
+    except ImportError:
+        # Используем старый формат при отсутствии модуля
+        message = "Выберите позицию для исправления:\n\n"
+        for i, issue in enumerate(issues):
+            original = issue.get("original", {})
+            name = original.get("name", "Позиция")
+            quantity = original.get("quantity", 0)
+            unit = original.get("unit", "")
+            
+            issue_type = issue.get("issue", "Проблема")
+            
+            message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
     
     keyboard = make_issue_list_keyboard(issues)
     
@@ -647,16 +682,20 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
                 await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
             else:
                 # Показываем обновленный список проблем
-                message = "Позиция удалена. Выберите следующую позицию для исправления:\n\n"
-                for i, issue in enumerate(current_issues):
-                    original = issue.get("original", {})
-                    name = original.get("name", "Позиция")
-                    quantity = original.get("quantity", 0)
-                    unit = original.get("unit", "")
-                    
-                    issue_type = issue.get("issue", "Проблема")
-                    
-                    message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+                try:
+                    from app.utils.markdown import make_issue_list
+                    message = make_issue_list(current_issues)
+                except ImportError:
+                    message = "Позиция удалена. Выберите следующую позицию для исправления:\n\n"
+                    for i, issue in enumerate(current_issues):
+                        original = issue.get("original", {})
+                        name = original.get("name", "Позиция")
+                        quantity = original.get("quantity", 0)
+                        unit = original.get("unit", "")
+                        
+                        issue_type = issue.get("issue", "Проблема")
+                        
+                        message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
                 
                 keyboard = make_issue_list_keyboard(current_issues)
                 await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
@@ -742,16 +781,20 @@ async def cb_select_product(c: CallbackQuery, state: FSMContext):
             await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
         else:
             # Показываем обновленный список проблем
-            message = f"✅ Товар заменен на *{product.name}*. Выберите следующую позицию:\n\n"
-            for i, issue in enumerate(current_issues):
-                original = issue.get("original", {})
-                name = original.get("name", "Позиция")
-                quantity = original.get("quantity", 0)
-                unit = original.get("unit", "")
-                
-                issue_type = issue.get("issue", "Проблема")
-                
-                message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+            try:
+                from app.utils.markdown import make_issue_list
+                message = f"✅ Товар заменен на *{product.name}*.\n\n" + make_issue_list(current_issues)
+            except ImportError:
+                message = f"✅ Товар заменен на *{product.name}*. Выберите следующую позицию:\n\n"
+                for i, issue in enumerate(current_issues):
+                    original = issue.get("original", {})
+                    name = original.get("name", "Позиция")
+                    quantity = original.get("quantity", 0)
+                    unit = original.get("unit", "")
+                    
+                    issue_type = issue.get("issue", "Проблема")
+                    
+                    message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
             
             keyboard = make_issue_list_keyboard(current_issues)
             await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
@@ -896,16 +939,20 @@ async def cb_select_unit(c: CallbackQuery, state: FSMContext):
             await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
         else:
             # Показываем обновленный список проблем
-            message = f"✅ Единица измерения изменена на *{unit}*. Выберите следующую позицию:\n\n"
-            for i, issue in enumerate(current_issues):
-                original = issue.get("original", {})
-                name = original.get("name", "Позиция")
-                quantity = original.get("quantity", 0)
-                unit = original.get("unit", "")
-                
-                issue_type = issue.get("issue", "Проблема")
-                
-                message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+            try:
+                from app.utils.markdown import make_issue_list
+                message = f"✅ Единица измерения изменена на *{unit}*.\n\n" + make_issue_list(current_issues)
+            except ImportError:
+                message = f"✅ Единица измерения изменена на *{unit}*. Выберите следующую позицию:\n\n"
+                for i, issue in enumerate(current_issues):
+                    original = issue.get("original", {})
+                    name = original.get("name", "Позиция")
+                    quantity = original.get("quantity", 0)
+                    unit = original.get("unit", "")
+                    
+                    issue_type = issue.get("issue", "Проблема")
+                    
+                    message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
             
             keyboard = make_issue_list_keyboard(current_issues)
             await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
@@ -913,7 +960,6 @@ async def cb_select_unit(c: CallbackQuery, state: FSMContext):
         await c.answer("❌ Ошибка при обновлении единицы измерения.")
     
     await c.answer()
-
 
 # ───────────────────────── Конвертация единиц измерения ────────────────────────
 @router.callback_query(Text("convert_yes"))
@@ -988,19 +1034,26 @@ async def cb_convert_yes(c: CallbackQuery, state: FSMContext):
                     await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
                 else:
                     # Показываем обновленный список проблем
-                    message = (
-                        f"✅ Конвертировано: {quantity} {conversion_from} → "
-                        f"{converted} {conversion_to}. Выберите следующую позицию:\n\n"
-                    )
-                    for i, issue in enumerate(current_issues):
-                        original = issue.get("original", {})
-                        name = original.get("name", "Позиция")
-                        quantity = original.get("quantity", 0)
-                        unit = original.get("unit", "")
-                        
-                        issue_type = issue.get("issue", "Проблема")
-                        
-                        message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+                    try:
+                        from app.utils.markdown import make_issue_list
+                        message = (
+                            f"✅ Конвертировано: {quantity} {conversion_from} → "
+                            f"{converted} {conversion_to}.\n\n" + make_issue_list(current_issues)
+                        )
+                    except ImportError:
+                        message = (
+                            f"✅ Конвертировано: {quantity} {conversion_from} → "
+                            f"{converted} {conversion_to}. Выберите следующую позицию:\n\n"
+                        )
+                        for i, issue in enumerate(current_issues):
+                            original = issue.get("original", {})
+                            name = original.get("name", "Позиция")
+                            quantity = original.get("quantity", 0)
+                            unit = original.get("unit", "")
+                            
+                            issue_type = issue.get("issue", "Проблема")
+                            
+                            message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
                     
                     keyboard = make_issue_list_keyboard(current_issues)
                     await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
@@ -1081,16 +1134,20 @@ async def cb_convert_no(c: CallbackQuery, state: FSMContext):
             await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
         else:
             # Показываем обновленный список проблем
-            message = f"✅ Единица измерения изменена на *{conversion_to}* (без конвертации количества). Выберите следующую позицию:\n\n"
-            for i, issue in enumerate(current_issues):
-                original = issue.get("original", {})
-                name = original.get("name", "Позиция")
-                quantity = original.get("quantity", 0)
-                unit = original.get("unit", "")
-                
-                issue_type = issue.get("issue", "Проблема")
-                
-                message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+            try:
+                from app.utils.markdown import make_issue_list
+                message = f"✅ Единица измерения изменена на *{conversion_to}* (без конвертации количества).\n\n" + make_issue_list(current_issues)
+            except ImportError:
+                message = f"✅ Единица измерения изменена на *{conversion_to}* (без конвертации количества). Выберите следующую позицию:\n\n"
+                for i, issue in enumerate(current_issues):
+                    original = issue.get("original", {})
+                    name = original.get("name", "Позиция")
+                    quantity = original.get("quantity", 0)
+                    unit = original.get("unit", "")
+                    
+                    issue_type = issue.get("issue", "Проблема")
+                    
+                    message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
             
             keyboard = make_issue_list_keyboard(current_issues)
             await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
@@ -1179,16 +1236,20 @@ async def process_field_input(message: Message, state: FSMContext):
                     await message.answer(final_message, reply_markup=keyboard, parse_mode="Markdown")
                 else:
                     # Показываем обновленный список проблем
-                    update_message = f"✅ Количество изменено на *{quantity}*. Выберите следующую позицию:\n\n"
-                    for i, issue in enumerate(current_issues):
-                        original = issue.get("original", {})
-                        name = original.get("name", "Позиция")
-                        quantity = original.get("quantity", 0)
-                        unit = original.get("unit", "")
-                        
-                        issue_type = issue.get("issue", "Проблема")
-                        
-                        update_message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+                    try:
+                        from app.utils.markdown import make_issue_list
+                        update_message = f"✅ Количество изменено на *{quantity}*.\n\n" + make_issue_list(current_issues)
+                    except ImportError:
+                        update_message = f"✅ Количество изменено на *{quantity}*. Выберите следующую позицию:\n\n"
+                        for i, issue in enumerate(current_issues):
+                            original = issue.get("original", {})
+                            name = original.get("name", "Позиция")
+                            quantity = original.get("quantity", 0)
+                            unit = original.get("unit", "")
+                            
+                            issue_type = issue.get("issue", "Проблема")
+                            
+                            update_message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
                     
                     keyboard = make_issue_list_keyboard(current_issues)
                     await message.answer(update_message, reply_markup=keyboard, parse_mode="Markdown")
@@ -1258,16 +1319,20 @@ async def cb_back(c: CallbackQuery, state: FSMContext):
         issues = data.get("current_issues", [])
         
         # Показываем список проблемных позиций
-        message = "Выберите позицию для исправления:\n\n"
-        for i, issue in enumerate(issues):
-            original = issue.get("original", {})
-            name = original.get("name", "Позиция")
-            quantity = original.get("quantity", 0)
-            unit = original.get("unit", "")
-            
-            issue_type = issue.get("issue", "Проблема")
-            
-            message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+        try:
+            from app.utils.markdown import make_issue_list
+            message = make_issue_list(issues)
+        except ImportError:
+            message = "Выберите позицию для исправления:\n\n"
+            for i, issue in enumerate(issues):
+                original = issue.get("original", {})
+                name = original.get("name", "Позиция")
+                quantity = original.get("quantity", 0)
+                unit = original.get("unit", "")
+                
+                issue_type = issue.get("issue", "Проблема")
+                
+                message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
         
         keyboard = make_issue_list_keyboard(issues)
         await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
@@ -1316,16 +1381,20 @@ async def cb_back(c: CallbackQuery, state: FSMContext):
             await state.update_data(current_issues=issues)
         
         # Показываем список проблемных позиций
-        message = "Выберите позицию для исправления:\n\n"
-        for i, issue in enumerate(issues):
-            original = issue.get("original", {})
-            name = original.get("name", "Позиция")
-            quantity = original.get("quantity", 0)
-            unit = original.get("unit", "")
-            
-            issue_type = issue.get("issue", "Проблема")
-            
-            message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
+        try:
+            from app.utils.markdown import make_issue_list
+            message = make_issue_list(issues)
+        except ImportError:
+            message = "Выберите позицию для исправления:\n\n"
+            for i, issue in enumerate(issues):
+                original = issue.get("original", {})
+                name = original.get("name", "Позиция")
+                quantity = original.get("quantity", 0)
+                unit = original.get("unit", "")
+                
+                issue_type = issue.get("issue", "Проблема")
+                
+                message += f"{i+1}. *{name}*, {quantity} {unit} - {issue_type}\n"
         
         keyboard = make_issue_list_keyboard(issues)
         await c.message.edit_text(message, reply_markup=keyboard, parse_mode="Markdown")
