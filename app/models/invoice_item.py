@@ -1,34 +1,38 @@
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Float
+from decimal import Decimal
+
+from sqlalchemy import DECIMAL, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base
+from .base import Base, int_pk
 
 
 class InvoiceItem(Base):
-    """Позиция в накладной."""
+    """Позиция (строка) накладной."""
 
     __tablename__ = "invoice_items"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
+    id: Mapped[int] = int_pk
     invoice_id: Mapped[int] = mapped_column(
-        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        index=True,
     )
     product_id: Mapped[int | None] = mapped_column(
-        ForeignKey("products.id", ondelete="SET NULL"), index=True
+        ForeignKey("products.id", ondelete="SET NULL")
     )
 
-    quantity: Mapped[float] = mapped_column(Float)
-    price: Mapped[float] = mapped_column(Float)
+    # распознанные данные
+    name: Mapped[str] = mapped_column(String(128))
+    quantity: Mapped[Decimal] = mapped_column(DECIMAL(12, 3))
+    unit: Mapped[str] = mapped_column(String(16))
+    price: Mapped[Decimal] = mapped_column(DECIMAL(12, 2))
+    sum: Mapped[Decimal] = mapped_column(DECIMAL(14, 2))
 
-    # --- relationships -------------------------------------------------
-    invoice: Mapped["Invoice"] = relationship(back_populates="items")
-    product: Mapped["Product | None"] = relationship(back_populates="items")
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"<Item inv={self.invoice_id} prod={self.product_id} "
-            f"qty={self.quantity} price={self.price}>"
-        )
+    # связи ------------------------------------------------------------
+    product: Mapped["Product | None"] = relationship(
+        "Product", back_populates="items", lazy="joined"
+    )
+    invoice: Mapped["Invoice"] = relationship(
+        "Invoice", back_populates="items", lazy="selectin"
+    )
