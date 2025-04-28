@@ -7,17 +7,14 @@ from .base import Base, IntPK
 
 
 class Product(Base):
-    """Товар, учётная карточка."""
+    __tablename__ = "products"
 
-    # ─── PK ────────────────────────────────────────────────────────────────
-    id: Mapped[IntPK]  # type: ignore[valid-type]
+    id: Mapped[IntPK]                    # type: ignore[valid-type]
 
-    # ─── Атрибуты товара ──────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    unit: Mapped[str] = mapped_column(String(16), nullable=False)  # кг, л, шт …
-    default_price: Mapped[float | None] = mapped_column(Numeric(14, 2))  # опционально
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    default_price: Mapped[float | None] = mapped_column(Numeric(14, 2))
 
-    # ─── Связи ─────────────────────────────────────────────────────────────
     items: Mapped[list["InvoiceItem"]] = relationship(
         "InvoiceItem",
         back_populates="product",
