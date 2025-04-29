@@ -1231,9 +1231,6 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         else:
             await c.answer("❌ Ошибка при удалении позиции.")
 
-# Замените весь блок elif action == "convert": внутри cb_action_with_item
-# на следующий код:
-
 elif action == "convert":
     # Конвертация единиц измерения
     product = selected_issue.get("product")
