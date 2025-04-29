@@ -322,33 +322,61 @@ def analyze_items_issues(data, products_info):
     return issues, parser_comment
 
 
-def make_improved_invoice_markdown(data, issues, parser_comment):
+def make_improved_invoice_markdown(
+    data: dict,
+    issues: list[dict],
+    parser_comment: str | None = None,
+) -> str:
     """
-    Creates a Markdown summary with focus on issues and a table of items.
-    
-    Использует новый формат с таблицей позиций вместо общей суммы.
+    Возвращает Markdown-превью накладной c акцентом на проблемные позиции.
+
+    • Пытаемся вызвать `make_invoice_preview` (новый модуль в app.utils.markdown).  
+    • Если модуль недоступен — формируем fallback-сообщение вручную.
     """
+    # --- основной путь -------------------------------------------------------
     try:
-        # Пытаемся использовать новый модуль форматирования
         from app.utils.markdown import make_invoice_preview
-    
-    return make_invoice_preview(
-        data,
-        issues,
-        fixed_issues={},          # пока пусто
-        show_all_issues=True,     # сразу показать список проблем
+
+        msg = make_invoice_preview(
+            data,
+            issues,
+            fixed_issues={},      # пока нет исправлений
+            show_all_issues=True, # сразу показать проблемные строки
         )
+
+        # добавляем комментарий парсера, если он есть
+        if parser_comment:
+            msg += f"\n\n_{parser_comment}_"
+
+        return msg
+
+    # --- резервный путь ------------------------------------------------------
     except ImportError:
-        # Если модуль недоступен, используем наш улучшенный формат
-        positions = data.get("positions", [])
-        
-        # Пропускаем удаленные позиции при подсчете
-        active_positions = [p for p in positions if not p.get("deleted", False)]
-        
-        # Create header with invoice details
-        header = f"📄 *Supplier:* \"{data.get('supplier', 'Unknown')}\"  \n"
-        header += f"🗓️ *Date:* {data.get('date', 'Unknown')}"
-        
+        positions = [
+            p for p in data.get("positions", []) if not p.get("deleted", False)
+        ]
+
+        header = (
+            f"📄 *Supplier:* \"{data.get('supplier', 'Unknown')}\"  \n"
+            f"🗓️ *Date:* {data.get('date', 'Unknown')}"
+        )
+
+        issues_block = "\n\n🚩 *Проблемные позиции:*\n"
+        for i, issue in enumerate(issues, 1):
+            orig = issue.get("original", {})
+            name = orig.get("name", "Item")
+            qty  = orig.get("quantity", "")
+            unit = orig.get("unit", "")
+            price = orig.get("price", "")
+            issues_block += f"{i}. {name} — {qty} {unit} × {price}\n"
+
+        footer = f"\nВсего позиций: {len(positions)}"
+
+        msg = f"{header}{issues_block}{footer}"
+        if parser_comment:
+            msg += f"\n\n_{parser_comment}_"
+
+        return msg        
         if data.get('number'):
             header += f"  № {data.get('number')}\n\n"
         else:
