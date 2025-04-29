@@ -1131,6 +1131,14 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         if product and product.unit and product.unit not in common_units:
             common_units.insert(0, product.unit)
         
+elif action == "unit":
+        # Переход к выбору единицы измерения
+        await state.set_state(InvoiceEditStates.field_input)
+        await state.update_data(field="unit")
+        
+        # Подготавливаем список единиц измерения
+        common_units = ["kg", "g", "l", "ml", "pcs", "pack", "box"]
+        
         # Создаем клавиатуру для выбора единиц измерения
         buttons = []
         row = []
@@ -1230,40 +1238,40 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
                 await c.message.answer(message, reply_markup=keyboard, parse_mode="HTML")
         else:
             await c.answer("❌ Ошибка при удалении позиции.")
-
-elif action == "convert":
-    # Конвертация единиц измерения
-    product = selected_issue.get("product")
-    # Проверяем наличие продукта перед попыткой конвертации
-    if not product:
-        # Вместо простого сообщения об ошибке предлагаем варианты действий
-        msg = (
-            "❌ Нет данных о товаре для конвертации.\n\n"
-            "Для конвертации единиц измерения необходимо сначала сопоставить товар с базой данных."
-        )
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔍 Найти в базе", callback_data=f"{CB_ACTION_PREFIX}name"),
-                InlineKeyboardButton(text="✏️ Редактировать название", callback_data=f"{CB_ACTION_PREFIX}edit_name")
-            ],
-            [
-                InlineKeyboardButton(text="➕ Создать новый", callback_data=f"{CB_ACTION_PREFIX}add_new"),
-                InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)
-            ]
-        ])
-        
-        await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
-        await c.answer()
-        return
     
-    # Получаем данные для конвертации
-    invoice_unit = original.get("unit", "")
-    db_unit = product.unit
-    
-    if not invoice_unit or not db_unit or invoice_unit == db_unit:
-        await c.answer("⚠️ Нет необходимости в конвертации.")
-        return
+    elif action == "convert":
+        # Конвертация единиц измерения
+        product = selected_issue.get("product")
+        # Проверяем наличие продукта перед попыткой конвертации
+        if not product:
+            # Вместо простого сообщения об ошибке предлагаем варианты действий
+            msg = (
+                "❌ Нет данных о товаре для конвертации.\n\n"
+                "Для конвертации единиц измерения необходимо сначала сопоставить товар с базой данных."
+            )
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🔍 Найти в базе", callback_data=f"{CB_ACTION_PREFIX}name"),
+                    InlineKeyboardButton(text="✏️ Редактировать название", callback_data=f"{CB_ACTION_PREFIX}edit_name")
+                ],
+                [
+                    InlineKeyboardButton(text="➕ Создать новый", callback_data=f"{CB_ACTION_PREFIX}add_new"),
+                    InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)
+                ]
+            ])
+            
+            await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
+            await c.answer()
+            return
+        
+        # Получаем данные для конвертации
+        invoice_unit = original.get("unit", "")
+        db_unit = product.unit
+        
+        if not invoice_unit or not db_unit or invoice_unit == db_unit:
+            await c.answer("⚠️ Нет необходимости в конвертации.")
+            return
     
     # Проверяем совместимость единиц
     if not is_compatible_unit(invoice_unit, db_unit):
