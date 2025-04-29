@@ -95,17 +95,10 @@ def truncate_text(text: str, max_length: int = MAX_ITEM_LENGTH) -> str:
         return text[:max_length-3] + "..."
     return text
 
-def escape_markdown(text: str) -> str:
-    """
-    Экранирует специальные символы Markdown.
-    
-    Args:
-        text: Исходный текст
-        
-    Returns:
-        str: Текст с экранированными спецсимволами
-    """
-    markdown_chars = r'_*[]()~`>#+-=|{}.!'
+def escape_markdown(text: str | None) -> str:
+    if not text:                         # ловим None или ""
+        return ""
+    markdown_chars = r"\_*[]()~>`|#"+ "!"
     return "".join(f"\\{c}" if c in markdown_chars else c for c in text)
 
 def make_invoice_preview(
