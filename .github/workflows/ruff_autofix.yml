@@ -1,0 +1,37 @@
+name: Ruff autofix
+
+on:
+  workflow_dispatch:   # запуск вручную из вкладки Actions
+  pull_request:        # или авто-фиксы к каждому PR
+
+permissions:          # нужно право писать в репозиторий
+  contents: write
+  pull-requests: write
+
+jobs:
+  ruff-fix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}   # встроённый токен
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff with autofix
+        run: ruff check . --fix
+
+      # коммитит любые изменения, если они появились
+      - name: Commit & push
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: ruff —fix"
+          branch: ${{ github.head_ref }}       # пушим в ту же ветку PR
+          skip_fetch: true
