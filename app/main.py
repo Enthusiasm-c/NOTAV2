@@ -18,7 +18,7 @@ from app.routers.telegram_bot import router as telegram_router
 from app.routers.issue_editor import router as editor_router
 
 # Import enhanced editor handlers
-from app.routers.issue_editor_handlers import setup_edit_handlers
+# from app.routers.issue_editor_handlers import setup_edit_handlers
 
 # Configure structured logging
 structlog.configure(
