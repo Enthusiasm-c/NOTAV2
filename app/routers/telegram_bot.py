@@ -324,16 +324,16 @@ def analyze_items_issues(data, products_info):
 
 def make_improved_invoice_markdown(data, issues, parser_comment):
     """
-    Creates a Markdown summary with focus on issues.
+    Creates a Markdown summary with focus on issues and a table of items.
     
-    Используем новый модуль markdown для улучшенного отображения.
+    Использует новый формат с таблицей позиций вместо общей суммы.
     """
     try:
         # Пытаемся использовать новый модуль форматирования
         from app.utils.markdown import make_invoice_preview
         return make_invoice_preview(data, issues, parser_comment)
     except ImportError:
-        # Если модуль недоступен, используем старый формат
+        # Если модуль недоступен, используем наш улучшенный формат
         positions = data.get("positions", [])
         
         # Пропускаем удаленные позиции при подсчете
@@ -359,23 +359,44 @@ def make_improved_invoice_markdown(data, issues, parser_comment):
         if issues:
             header += f"❓ *Need attention* — {len(issues)} items  \n"
         
-        # Add parser comment
-        header += f"💬 *Parser comment:*  \n\"{parser_comment}\"\n"
+        # Add parser comment if provided
+        if parser_comment:
+            header += f"💬 *Parser comment:*  \n\"{parser_comment}\"\n"
+        
         header += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         
-        # If there are issues, add issues table
+        # НОВЫЙ КОД: Всегда добавляем таблицу позиций, требующих внимания
         if issues:
             header += "*🚩 Items to review*\n\n"
             
-            # Create issues table
-            table_header = "|  # | Invoice item | Database item | Issue |\n"
-            table_header += "|:--:|-------------|---------------|-------|\n"
+            # Создаем таблицу с позициями, требующими правки
+            table_header = "|  № | Наименование | Кол-во/Ед. | Цена |\n"
+            table_header += "|:--:|-------------|------------|------|\n"
             
             rows = []
             for issue in issues:
+                # Получаем данные о позиции из original
+                original = issue.get("original", {})
+                name = original.get("name", "Unknown")
+                quantity = original.get("quantity", "")
+                unit = original.get("unit", "")
+                price = original.get("price", "")
+                
+                # Форматируем столбец количества и единицы измерения
+                qty_unit = f"{quantity} {unit}".strip()
+                
+                # Форматируем цену, если она есть
+                price_display = ""
+                if price:
+                    try:
+                        price_float = float(price)
+                        price_display = f"{price_float:,.2f}"
+                    except (ValueError, TypeError):
+                        price_display = str(price)
+                
+                # Формируем строку таблицы
                 rows.append(
-                    f"| {issue['index']} | {issue['invoice_item']} | "
-                    f"{issue['db_item']} | {issue['issue']} |"
+                    f"| {issue['index']} | {name} | {qty_unit} | {price_display} |"
                 )
             
             return header + table_header + "\n".join(rows)
