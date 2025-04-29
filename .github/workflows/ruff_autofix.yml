@@ -1,13 +1,12 @@
 name: Ruff autofix
 
 on:
-  workflow_dispatch:   # запуск вручную из вкладки Actions
-  pull_request:        # или авто-фиксы к каждому PR
-
-permissions:          # нужно право писать в репозиторий
-  contents: write
-  pull-requests: write
-
+  workflow_dispatch:    # ← единственный триггер
+    inputs:
+      unsafe:
+        description: "Включить --unsafe-fixes?"
+        required: false
+        default: "false"
 jobs:
   ruff-fix:
     runs-on: ubuntu-latest
