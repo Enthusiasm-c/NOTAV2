@@ -24,7 +24,29 @@ from aiogram.types import (
     InlineKeyboardButton,
     ForceReply
 )
-from aiogram.filters import Text
+# Адаптивный импорт для разных версий aiogram
+try:
+    # aiogram 3.x.x
+    from aiogram.filters import Text
+except ImportError:
+    try:
+        # aiogram 3.x альтернативное расположение
+        from aiogram.filters.text import Text
+    except ImportError:
+        # Если не найдено - создаем свою реализацию
+        class Text:
+            """Совместимая реализация фильтра Text."""
+            def __init__(self, text=None):
+                self.text = text if isinstance(text, list) else [text] if text else None
+            
+            def __call__(self, message):
+                if hasattr(message, 'text'):
+                    # Для текстовых сообщений
+                    return self.text is None or message.text in self.text
+                elif hasattr(message, 'data'):
+                    # Для callback_query
+                    return self.text is None or message.data in self.text
+                return False
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
