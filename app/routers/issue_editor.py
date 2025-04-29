@@ -1231,132 +1231,132 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         else:
             await c.answer("❌ Ошибка при удалении позиции.")
 
+# Замените весь блок elif action == "convert": внутри cb_action_with_item
+# на следующий код:
+
 elif action == "convert":
-        # Конвертация единиц измерения
-        product = selected_issue.get("product")
-        # Проверяем наличие продукта перед попыткой конвертации
-        if not product:
-            # Вместо простого сообщения об ошибке предлагаем варианты действий
-            msg = (
-                "❌ Нет данных о товаре для конвертации.\n\n"
-                "Для конвертации единиц измерения необходимо сначала сопоставить товар с базой данных."
-            )
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🔍 Найти в базе", callback_data=f"{CB_ACTION_PREFIX}name"),
-                    InlineKeyboardButton(text="✏️ Редактировать название", callback_data=f"{CB_ACTION_PREFIX}edit_name")
-                ],
-                [
-                    InlineKeyboardButton(text="➕ Создать новый", callback_data=f"{CB_ACTION_PREFIX}add_new"),
-                    InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)
-                ]
-            ])
-            
-            await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
-            await c.answer()
-            return
+    # Конвертация единиц измерения
+    product = selected_issue.get("product")
+    # Проверяем наличие продукта перед попыткой конвертации
+    if not product:
+        # Вместо простого сообщения об ошибке предлагаем варианты действий
+        msg = (
+            "❌ Нет данных о товаре для конвертации.\n\n"
+            "Для конвертации единиц измерения необходимо сначала сопоставить товар с базой данных."
+        )
         
-        # Получаем данные для конвертации
-        invoice_unit = original.get("unit", "")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔍 Найти в базе", callback_data=f"{CB_ACTION_PREFIX}name"),
+                InlineKeyboardButton(text="✏️ Редактировать название", callback_data=f"{CB_ACTION_PREFIX}edit_name")
+            ],
+            [
+                InlineKeyboardButton(text="➕ Создать новый", callback_data=f"{CB_ACTION_PREFIX}add_new"),
+                InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)
+            ]
+        ])
         
-        # Получаем данные для конвертации
-        invoice_unit = original.get("unit", "")
-        db_unit = product.unit
+        await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
+        await c.answer()
+        return
+    
+    # Получаем данные для конвертации
+    invoice_unit = original.get("unit", "")
+    db_unit = product.unit
+    
+    if not invoice_unit or not db_unit or invoice_unit == db_unit:
+        await c.answer("⚠️ Нет необходимости в конвертации.")
+        return
+    
+    # Проверяем совместимость единиц
+    if not is_compatible_unit(invoice_unit, db_unit):
+        msg = f"❌ Невозможно конвертировать: единицы <b>{invoice_unit}</b> и <b>{db_unit}</b> несовместимы."
         
-        if not invoice_unit or not db_unit or invoice_unit == db_unit:
-            await c.answer("⚠️ Нет необходимости в конвертации.")
-            return
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)]
+        ])
         
-        # Проверяем совместимость единиц
-        if not is_compatible_unit(invoice_unit, db_unit):
-            msg = f"❌ Невозможно конвертировать: единицы <b>{invoice_unit}</b> и <b>{db_unit}</b> несовместимы."
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)]
-            ])
-            
-            await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
-            await c.answer()
-            return
-        
-        # Выполняем конвертацию
-        quantity = float(original.get("quantity", 0))
-        converted = convert(quantity, invoice_unit, db_unit)
+        await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
+        await c.answer()
+        return
+    
+    # Выполняем конвертацию
+    quantity = float(original.get("quantity", 0))
+    converted = convert(quantity, invoice_unit, db_unit)
 
-        if converted is None:
-            await c.answer("❌ Ошибка при конвертации.")
-            return
+    if converted is None:
+        await c.answer("❌ Ошибка при конвертации.")
+        return
 
-        # Обновляем данные
-        invoice_data = data.get("invoice", {})
-        positions = invoice_data.get("positions", [])
-        position_idx = selected_issue.get("index", 0) - 1
+    # Обновляем данные
+    invoice_data = data.get("invoice", {})
+    positions = invoice_data.get("positions", [])
+    position_idx = selected_issue.get("index", 0) - 1
 
-        if 0 <= position_idx < len(positions):
-            # Обновляем позицию
-            positions[position_idx]["quantity"] = converted
-            positions[position_idx]["unit"] = db_unit
+    if 0 <= position_idx < len(positions):
+        # Обновляем позицию
+        positions[position_idx]["quantity"] = converted
+        positions[position_idx]["unit"] = db_unit
 
-            # Пересчитываем сумму, если есть цена
-            if price := positions[position_idx].get("price"):
-                try:
-                    price_float = float(price)
-                    positions[position_idx]["sum"] = converted * price_float
-                except (ValueError, TypeError):
-                    pass
-
-            # Обновляем данные в состоянии
-            invoice_data["positions"] = positions
-            await state.update_data(invoice=invoice_data)
-
-            # Добавляем в список исправленных позиций
-            fixed_issues = data.get("fixed_issues", {}) or {}
-            fixed_issues[position_idx] = {
-                "action":       "convert_unit",
-                "from_unit":    invoice_unit,
-                "to_unit":      db_unit,
-                "old_quantity": quantity,
-                "new_quantity": converted,
-            }
-            await state.update_data(fixed_issues=fixed_issues)
-
-            # Обновляем список проблем (удаляем решённую)
-            issues      = data.get("current_issues", [])
-            issue_idx   = data.get("selected_issue_idx", 0)
-            new_issues  = [issue for i, issue in enumerate(issues) if i != issue_idx]
-            await state.update_data(current_issues=new_issues)
-
-            # Возвращаемся к списку проблем или к подтверждению
-            if not new_issues:
-                await state.set_state(InvoiceEditStates.confirm)
-                message, keyboard = await format_final_preview(
-                    invoice_data,
-                    data.get("issues", []),
-                    fixed_issues,
-                )
-            else:
-                await state.set_state(InvoiceEditStates.issue_list)
-                message, keyboard = await format_issues_list(
-                    {"issues": new_issues},
-                    page=data.get("current_page", 0),
-                )
-
-            # Добавляем информацию о конвертации
-            conv_msg = (
-                f"✅ Конвертация выполнена: {quantity} {invoice_unit} → "
-                f"{converted} {db_unit}\n\n"
-                + message
-            )
-            
-            # Отправляем сообщение
+        # Пересчитываем сумму, если есть цена
+        if price := positions[position_idx].get("price"):
             try:
-                await c.message.edit_text(conv_msg, reply_markup=keyboard, parse_mode="HTML")
-            except Exception as e:
-                logger.error("Failed to edit message", error=str(e))
-                await c.message.answer(conv_msg, reply_markup=keyboard, parse_mode="HTML")
+                price_float = float(price)
+                positions[position_idx]["sum"] = converted * price_float
+            except (ValueError, TypeError):
+                pass
+
+        # Обновляем данные в состоянии
+        invoice_data["positions"] = positions
+        await state.update_data(invoice=invoice_data)
+
+        # Добавляем в список исправленных позиций
+        fixed_issues = data.get("fixed_issues", {}) or {}
+        fixed_issues[position_idx] = {
+            "action":       "convert_unit",
+            "from_unit":    invoice_unit,
+            "to_unit":      db_unit,
+            "old_quantity": quantity,
+            "new_quantity": converted,
+        }
+        await state.update_data(fixed_issues=fixed_issues)
+
+        # Обновляем список проблем (удаляем решённую)
+        issues      = data.get("current_issues", [])
+        issue_idx   = data.get("selected_issue_idx", 0)
+        new_issues  = [issue for i, issue in enumerate(issues) if i != issue_idx]
+        await state.update_data(current_issues=new_issues)
+
+        # Возвращаемся к списку проблем или к подтверждению
+        if not new_issues:
+            await state.set_state(InvoiceEditStates.confirm)
+            message, keyboard = await format_final_preview(
+                invoice_data,
+                data.get("issues", []),
+                fixed_issues,
+            )
         else:
-            await c.answer("❌ Ошибка при обновлении позиции.")
+            await state.set_state(InvoiceEditStates.issue_list)
+            message, keyboard = await format_issues_list(
+                {"issues": new_issues},
+                page=data.get("current_page", 0),
+            )
+
+        # Добавляем информацию о конвертации
+        conv_msg = (
+            f"✅ Конвертация выполнена: {quantity} {invoice_unit} → "
+            f"{converted} {db_unit}\n\n"
+            + message
+        )
+        
+        # Отправляем сообщение
+        try:
+            await c.message.edit_text(conv_msg, reply_markup=keyboard, parse_mode="HTML")
+        except Exception as e:
+            logger.error("Failed to edit message", error=str(e))
+            await c.message.answer(conv_msg, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await c.answer("❌ Ошибка при обновлении позиции.")
     
     elif action == "add_new":
         # Добавление нового товара
