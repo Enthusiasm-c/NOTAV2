@@ -1131,14 +1131,6 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         if product and product.unit and product.unit not in common_units:
             common_units.insert(0, product.unit)
         
-    elif action == "unit":
-        # Переход к выбору единицы измерения
-        await state.set_state(InvoiceEditStates.field_input)
-        await state.update_data(field="unit")
-        
-        # Подготавливаем список единиц измерения
-        common_units = ["kg", "g", "l", "ml", "pcs", "pack", "box"]
-        
         # Создаем клавиатуру для выбора единиц измерения
         buttons = []
         row = []
@@ -1272,100 +1264,98 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         if not invoice_unit or not db_unit or invoice_unit == db_unit:
             await c.answer("⚠️ Нет необходимости в конвертации.")
             return
-    
-    # Проверяем совместимость единиц
-    if not is_compatible_unit(invoice_unit, db_unit):
-        msg = f"❌ Невозможно конвертировать: единицы <b>{invoice_unit}</b> и <b>{db_unit}</b> несовместимы."
         
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)]
-        ])
+        # Проверяем совместимость единиц
+        if not is_compatible_unit(invoice_unit, db_unit):
+            msg = f"❌ Невозможно конвертировать: единицы <b>{invoice_unit}</b> и <b>{db_unit}</b> несовместимы."
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)]
+            ])
+            
+            await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
+            await c.answer()
+            return
         
-        await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
-        await c.answer()
-        return
-    
-    # Выполняем конвертацию
-    quantity = float(original.get("quantity", 0))
-    converted = convert(quantity, invoice_unit, db_unit)
+        # Выполняем конвертацию
+        quantity = float(original.get("quantity", 0))
+        converted = convert(quantity, invoice_unit, db_unit)
 
-    if converted is None:
-        await c.answer("❌ Ошибка при конвертации.")
-        return
+        if converted is None:
+            await c.answer("❌ Ошибка при конвертации.")
+            return
 
-    # Обновляем данные
-    invoice_data = data.get("invoice", {})
-    positions = invoice_data.get("positions", [])
-    position_idx = selected_issue.get("index", 0) - 1
+        # Обновляем данные
+        invoice_data = data.get("invoice", {})
+        positions = invoice_data.get("positions", [])
+        position_idx = selected_issue.get("index", 0) - 1
 
-    if 0 <= position_idx < len(positions):
-        # Обновляем позицию
-        positions[position_idx]["quantity"] = converted
-        positions[position_idx]["unit"] = db_unit
+        if 0 <= position_idx < len(positions):
+            # Обновляем позицию
+            positions[position_idx]["quantity"] = converted
+            positions[position_idx]["unit"] = db_unit
 
-        # Пересчитываем сумму, если есть цена
-        if price := positions[position_idx].get("price"):
+            # Пересчитываем сумму, если есть цена
+            if price := positions[position_idx].get("price"):
+                try:
+                    price_float = float(price)
+                    positions[position_idx]["sum"] = converted * price_float
+                except (ValueError, TypeError):
+                    pass
+
+            # Обновляем данные в состоянии
+            invoice_data["positions"] = positions
+            await state.update_data(invoice=invoice_data)
+
+            # Добавляем в список исправленных позиций
+            fixed_issues = data.get("fixed_issues", {}) or {}
+            fixed_issues[position_idx] = {
+                "action":       "convert_unit",
+                "from_unit":    invoice_unit,
+                "to_unit":      db_unit,
+                "old_quantity": quantity,
+                "new_quantity": converted,
+            }
+            await state.update_data(fixed_issues=fixed_issues)
+
+            # Обновляем список проблем (удаляем решённую)
+            issues      = data.get("current_issues", [])
+            issue_idx   = data.get("selected_issue_idx", 0)
+            new_issues  = [issue for i, issue in enumerate(issues) if i != issue_idx]
+            await state.update_data(current_issues=new_issues)
+
+            # Возвращаемся к списку проблем или к подтверждению
+            if not new_issues:
+                await state.set_state(InvoiceEditStates.confirm)
+                message, keyboard = await format_final_preview(
+                    invoice_data,
+                    data.get("issues", []),
+                    fixed_issues,
+                )
+            else:
+                await state.set_state(InvoiceEditStates.issue_list)
+                message, keyboard = await format_issues_list(
+                    {"issues": new_issues},
+                    page=data.get("current_page", 0),
+                )
+
+            # Добавляем информацию о конвертации
+            conv_msg = (
+                f"✅ Конвертация выполнена: {quantity} {invoice_unit} → "
+                f"{converted} {db_unit}\n\n"
+                + message
+            )
+            
+            # Отправляем сообщение
             try:
-                price_float = float(price)
-                positions[position_idx]["sum"] = converted * price_float
-            except (ValueError, TypeError):
-                pass
-
-        # Обновляем данные в состоянии
-        invoice_data["positions"] = positions
-        await state.update_data(invoice=invoice_data)
-
-        # Добавляем в список исправленных позиций
-        fixed_issues = data.get("fixed_issues", {}) or {}
-        fixed_issues[position_idx] = {
-            "action":       "convert_unit",
-            "from_unit":    invoice_unit,
-            "to_unit":      db_unit,
-            "old_quantity": quantity,
-            "new_quantity": converted,
-        }
-        await state.update_data(fixed_issues=fixed_issues)
-
-# Обновляем список проблем (удаляем решённую)
-        issues      = data.get("current_issues", [])
-        issue_idx   = data.get("selected_issue_idx", 0)
-        new_issues  = [issue for i, issue in enumerate(issues) if i != issue_idx]
-        await state.update_data(current_issues=new_issues)
-
-        # Возвращаемся к списку проблем или к подтверждению
-        if not new_issues:
-            await state.set_state(InvoiceEditStates.confirm)
-            message, keyboard = await format_final_preview(
-                invoice_data,
-                data.get("issues", []),
-                fixed_issues,
-            )
+                await c.message.edit_text(conv_msg, reply_markup=keyboard, parse_mode="HTML")
+            except Exception as e:
+                logger.error("Failed to edit message", error=str(e))
+                await c.message.answer(conv_msg, reply_markup=keyboard, parse_mode="HTML")
         else:
-            await state.set_state(InvoiceEditStates.issue_list)
-            message, keyboard = await format_issues_list(
-                {"issues": new_issues},
-                page=data.get("current_page", 0),
-            )
-
-        # Добавляем информацию о конвертации
-        conv_msg = (
-            f"✅ Конвертация выполнена: {quantity} {invoice_unit} → "
-            f"{converted} {db_unit}\n\n"
-            + message
-        )
-        
-        # Отправляем сообщение
-        try:
-            await c.message.edit_text(conv_msg, reply_markup=keyboard, parse_mode="HTML")
-        except Exception as e:
-            logger.error("Failed to edit message", error=str(e))
-            await c.message.answer(conv_msg, reply_markup=keyboard, parse_mode="HTML")
-    else:
-        await c.answer("❌ Ошибка при обновлении позиции.")
+            await c.answer("❌ Ошибка при обновлении позиции.")
     
-# Начинаем новую цепочку условий для action == "add_new"
-# Меняем elif на if, так как это начало новой цепочки условий
-if action == "add_new":
+    elif action == "add_new":
         # Добавление нового товара
         invoice_data = data.get("invoice", {})
         position_idx = selected_issue.get("index", 0) - 1        
@@ -1400,182 +1390,50 @@ if action == "add_new":
             current_issues = [issue for i, issue in enumerate(issues) if i != issue_idx]
             await state.update_data(current_issues=current_issues)
             
-  # Вернуться к списку проблем или к финальному подтверждению
-if not current_issues:
-    await state.set_state(InvoiceEditStates.confirm)
-
-    message, keyboard = await format_final_preview(
-        invoice_data,
-        data.get("issues", []),
-        fixed_issues,
-    )
-else:
-    await state.set_state(InvoiceEditStates.issue_list)
-
-    message, keyboard = await format_issues_list(
-        {"issues": current_issues},
-        page=data.get("current_page", 0),
-    )
-
-# Сообщение об успешном добавлении товара
-message = (
-    f"✅ Товар <b>{original.get('name', '')}</b> сохранён как новый!\n\n"
-    + message
-)
-
-# Пытаемся обновить прежнее сообщение; если не удаётся — шлём новое
-try:
-    await c.message.edit_text(
-        message,
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-except Exception as e:
-    logger.error("Failed to edit message", error=str(e))
-    await c.message.answer(
-        message,
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-# Ответ на callback, чтобы Telegram убрал «часики»
-await c.answer()
-
-# ───────────────────────── Обработчик выбора товара ────────────────────────
-@router.callback_query(lambda c: c.data and (
-    c.data.startswith(CB_PRODUCT_PREFIX) or c.data.startswith("product_")
-), InvoiceEditStates.product_select)
-async def cb_select_product(c: CallbackQuery, state: FSMContext):
-    """
-    Обработчик выбора товара из списка.
-    
-    Поддерживает новый (product:ID) и старый (product_ID) форматы callback_data.
-    """
-    # Определяем ID товара
-    if c.data.startswith(CB_PRODUCT_PREFIX):
-        product_id = int(c.data[len(CB_PRODUCT_PREFIX):])
-    else:
-        product_id = int(c.data[len("product_"):])
-    
-    # Получаем данные из состояния
-    data = await state.get_data()
-    selected_issue = data.get("selected_issue", {})
-    invoice_data = data.get("invoice", {})
-    positions = invoice_data.get("positions", [])
-    
-    # Получаем информацию о выбранном товаре
-    async with SessionLocal() as session:
-        stmt = select(Product).where(Product.id == product_id)
-        result = await session.execute(stmt)
-        product = result.scalar_one_or_none()
-    
-    if not product:
-        await c.answer("❌ Товар не найден.")
-        return
-    
-    # Находим позицию в списке
-    issue_idx = data.get("selected_issue_idx", 0)
-    issues = data.get("current_issues", [])
-    
-    position_idx = selected_issue.get("index", 0) - 1
-    
-    if 0 <= position_idx < len(positions):
-        # Сохраняем оригинальное название для обучения
-        original_name = positions[position_idx].get("name", "")
-        
-        # Обновляем позицию
-        positions[position_idx]["match_id"] = product.id
-        positions[position_idx]["match_name"] = product.name
-        positions[position_idx]["confidence"] = 1.0  # Полная уверенность при ручном выборе
-        
-        # Проверяем совместимость единиц измерения
-        original_unit = positions[position_idx].get("unit", "")
-        if original_unit and not is_compatible_unit(original_unit, product.unit):
-            positions[position_idx]["unit_issue"] = True
-            positions[position_idx]["product_unit"] = product.unit
-        
-        # Обновляем данные в состоянии
-        invoice_data["positions"] = positions
-        await state.update_data(invoice=invoice_data)
-        
-        # Добавляем в список исправленных позиций
-        fixed_issues = data.get("fixed_issues", {})
-        if not fixed_issues:
-            fixed_issues = {}
-        
-        fixed_issues[position_idx] = {
-            "action": "replace_product",
-            "product_id": product.id,
-            "product_name": product.name,
-            "original_name": original_name
-        }
-        await state.update_data(fixed_issues=fixed_issues)
-        
-        # Сохраняем сопоставление для будущего использования
-        if original_name:
+            # Вернуться к списку проблем или к финальному подтверждению
+            if not current_issues:
+                await state.set_state(InvoiceEditStates.confirm)
+                
+                message, keyboard = await format_final_preview(
+                    invoice_data,
+                    data.get("issues", []),
+                    fixed_issues,
+                )
+            else:
+                await state.set_state(InvoiceEditStates.issue_list)
+                
+                message, keyboard = await format_issues_list(
+                    {"issues": current_issues},
+                    page=data.get("current_page", 0),
+                )
+            
+            # Сообщение об успешном добавлении товара
+            message = (
+                f"✅ Товар <b>{original.get('name', '')}</b> сохранён как новый!\n\n"
+                + message
+            )
+            
+            # Пытаемся обновить прежнее сообщение; если не удаётся — шлём новое
             try:
-                await save_product_match(session, original_name, product.id)
-                logger.info("Saved product match for learning", 
-                           original=original_name, 
-                           product_id=product.id)
+                await c.message.edit_text(
+                    message,
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                )
             except Exception as e:
-                logger.error("Failed to save product match", error=str(e))
-        
-        # Обновляем список проблем (удаляем решенную)
-        current_issues = issues.copy()
-        
-        # Проверяем на другие проблемы с этой позицией (например, единицы измерения)
-        unit_issue = positions[position_idx].get("unit_issue", False)
-        
-        if unit_issue:
-            # Если есть проблема с единицей измерения, обновляем issue
-            for i, issue in enumerate(current_issues):
-                if issue is selected_issue:
-                    issue["issue"] = "Unit measurement discrepancy"
-                    issue["product"] = product
-                    selected_issue = issue
-                    await state.update_data(selected_issue=issue)
-                    break
+                logger.error("Failed to edit message", error=str(e))
+                await c.message.answer(
+                    message,
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                )
         else:
-            # Если нет других проблем, удаляем issue
-            current_issues = [issue for i, issue in enumerate(issues) if i != issue_idx]
-            await state.update_data(current_issues=current_issues)
-        
-        # Переходим к следующему шагу
-        if unit_issue:
-            # Если есть проблема с единицей измерения, предлагаем исправить ее
-            await state.set_state(InvoiceEditStates.issue_edit)
-            
-            message, keyboard = await format_issue_edit(selected_issue)
-            message = f"✅ Товар заменен на <b>{product.name}</b>, но есть проблема с единицей измерения.\n\n" + message
-        elif not current_issues:
-            # Если проблем больше нет, переходим к подтверждению
-            await state.set_state(InvoiceEditStates.confirm)
-            
-            message, keyboard = await format_final_preview(
-                invoice_data, 
-                data.get("issues", []), 
-                fixed_issues
-            )
-        else:
-            # Если есть еще проблемы, возвращаемся к списку
-            await state.set_state(InvoiceEditStates.issue_list)
-            
-            message, keyboard = await format_issues_list(
-                {"issues": current_issues}, 
-                page=data.get("current_page", 0)
-            )
-            message = f"✅ Товар заменен на <b>{product.name}</b>\n\n" + message
-        
-        # Отправляем сообщение
-        try:
-            await c.message.edit_text(message, reply_markup=keyboard, parse_mode="HTML")
-        except Exception as e:
-            logger.error("Failed to edit message", error=str(e))
-            await c.message.answer(message, reply_markup=keyboard, parse_mode="HTML")
-    else:
-        await c.answer("❌ Ошибка при обновлении позиции.")
+            await c.answer("❌ Ошибка при добавлении нового товара.")
     
+    else:
+        await c.answer(f"⚠️ Неизвестное действие: {action}")
+    
+    # Отвечаем на callback, чтобы убрать часики у сообщения
     await c.answer()
 
 # ───────────────────────── Обработчики единиц измерения ────────────────────────
