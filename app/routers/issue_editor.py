@@ -1326,7 +1326,7 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         }
         await state.update_data(fixed_issues=fixed_issues)
 
-        # Обновляем список проблем (удаляем решённую)
+# Обновляем список проблем (удаляем решённую)
         issues      = data.get("current_issues", [])
         issue_idx   = data.get("selected_issue_idx", 0)
         new_issues  = [issue for i, issue in enumerate(issues) if i != issue_idx]
@@ -1363,11 +1363,12 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
     else:
         await c.answer("❌ Ошибка при обновлении позиции.")
     
-    elif action == "add_new":
+# Начинаем новую цепочку условий для action == "add_new"
+# Меняем elif на if, так как это начало новой цепочки условий
+if action == "add_new":
         # Добавление нового товара
         invoice_data = data.get("invoice", {})
-        position_idx = selected_issue.get("index", 0) - 1
-        
+        position_idx = selected_issue.get("index", 0) - 1        
         # Получаем данные позиции
         if "positions" in invoice_data and 0 <= position_idx < len(invoice_data["positions"]):
             # Отмечаем, что эта позиция будет добавлена как новый товар
