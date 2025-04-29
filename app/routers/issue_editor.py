@@ -870,8 +870,6 @@ async def format_final_preview(
 Отвечает за первый этап взаимодействия с пользователем.
 """
 
-from __future__ import annotations
-
 import structlog
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1081,8 +1079,6 @@ def register_handlers(router: Router):
 
 Отвечает за основной этап работы с позициями.
 """
-
-from __future__ import annotations
 
 import structlog
 from typing import Any, Dict, List, Optional, Tuple
@@ -1566,8 +1562,6 @@ def register_handlers(router: Router):
 
 Отвечает за завершающие этапы взаимодействия с пользователем.
 """
-
-from __future__ import annotations
 
 import structlog
 from typing import Any, Dict, List, Optional, Tuple
