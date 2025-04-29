@@ -179,19 +179,6 @@ def make_invoice_preview(
             issues_block += f"{i+1}\\. {emoji} *{name_display}*\n"
             issues_block += f"   {qty} {unit} × {price}\n"
             issues_block += f"   __{issue_info}__\n\n"
-    
-    # Итоговая сумма
-    try:
-        total_sum = sum(float(p.get('sum', 0)) for p in positions if p.get('sum') is not None)
-    except (ValueError, TypeError):
-        total_sum = 0
-    
-    footer = f"💰 *Итоговая сумма: {format_number(total_sum)} IDR*"
-    
-    # Собираем все вместе
-    result = f"{header}\n{status_bar}\n{issues_block}\n{footer}"
-    
-    return result
 
 def make_issue_list(issues: List[Dict[str, Any]]) -> str:
     """
