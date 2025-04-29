@@ -352,8 +352,6 @@ from app.routers.issue_editor_part5 import (
 Обеспечивает форматирование для всех типов сообщений в UI-редакторе.
 """
 
-from __future__ import annotations
-
 import re
 import math
 import html
