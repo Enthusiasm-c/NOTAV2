@@ -804,15 +804,6 @@ async def format_final_preview(
     else:
         message += "✅ <b>All issues resolved!</b>\n"
     
-    # Добавляем общую сумму, если она есть
-    if "total_sum" in invoice_data:
-        total_sum = invoice_data["total_sum"]
-        message += f"\n💰 <b>Total amount:</b> {total_sum:,.2f}\n"
-    else:
-        # Рассчитываем сумму из позиций
-        total_sum = sum(float(p.get("sum", 0)) if p.get("sum") else 0 for p in active_positions)
-        message += f"\n💰 <b>Total amount:</b> {total_sum:,.2f}\n"
-    
     # Добавляем инструкцию
     if remaining_issues > 0:
         message += "\n⚠️ <i>Note: Some issues remain unresolved, but you can still proceed.</i>"
