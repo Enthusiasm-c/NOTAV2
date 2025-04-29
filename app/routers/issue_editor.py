@@ -222,7 +222,8 @@ def is_semifinished(name: str) -> bool:
 async def get_products_by_name(
     session: AsyncSession, 
     name_query: str, 
-    limit: int = 20,
+    limit: int = 3,
+    threshold: float = 0.7,
     exclude_semifinished: bool = True
 ) -> List[Dict[str, Any]]:
     """
@@ -230,19 +231,42 @@ async def get_products_by_name(
     
     :param session: асинхронная сессия SQLAlchemy
     :param name_query: строка поиска
-    :param limit: максимальное количество результатов
+    :param limit: максимальное количество результатов (по умолчанию 3)
+    :param threshold: минимальный порог схожести (по умолчанию 0.7)
     :param exclude_semifinished: исключить полуфабрикаты из результатов
     :return: список товаров
     """
+    if not name_query:
+        return []
+    
     # Нормализуем запрос
     normalized_query = clean_name_for_comparison(name_query)
     
+    # Пытаемся использовать функцию find_similar_products из fuzzy_match, если она доступна
+    try:
+        from app.routers.fuzzy_match import find_similar_products
+        products = await find_similar_products(
+            session, 
+            normalized_query, 
+            limit=limit, 
+            threshold=threshold
+        )
+        
+        # Фильтруем полуфабрикаты если нужно
+        if exclude_semifinished:
+            products = [p for p in products if not is_semifinished(p["name"])]
+        
+        return products
+    except ImportError:
+        logger.warning("fuzzy_match module not found, using fallback search")
+    
+    # Резервный путь: используем прямой SQL запрос
     # Поиск по базе данных
     stmt = (
         select(Product.id, Product.name, Product.unit)
         .where(func.lower(Product.name).like(f"%{normalized_query}%"))
         .order_by(Product.name)
-        .limit(limit)
+        .limit(limit * 2)  # Запрашиваем больше для фильтрации
     )
     
     result = await session.execute(stmt)
@@ -257,23 +281,38 @@ async def get_products_by_name(
         
         # Вычисляем степень соответствия
         name_normalized = clean_name_for_comparison(name)
-        # Простой рейтинг соответствия на основе вхождения подстроки
-        confidence = 0.85  # Базовая уверенность для точных совпадений из БД
         
-        # Повышаем уверенность для более точных совпадений
-        if normalized_query == name_normalized:
-            confidence = 1.0
-        elif normalized_query in name_normalized.split():
-            confidence = 0.95
+        # Используем более точное вычисление схожести
+        try:
+            from rapidfuzz import fuzz
+            score = fuzz.token_sort_ratio(normalized_query, name_normalized) / 100.0
+        except ImportError:
+            # Простой расчет соответствия, если rapidfuzz не установлен
+            if normalized_query == name_normalized:
+                score = 1.0
+            elif normalized_query in name_normalized.split():
+                score = 0.85
+            elif normalized_query in name_normalized:
+                score = 0.75
+            else:
+                score = 0.65
+        
+        # Отфильтровываем результаты ниже порога схожести
+        if score < threshold:
+            continue
             
         products.append({
             "id": product_id,
             "name": name,
             "unit": unit,
-            "confidence": confidence
+            "confidence": score
         })
     
-    return products
+    # Сортируем по убыванию уверенности
+    products.sort(key=lambda p: p["confidence"], reverse=True)
+    
+    # Ограничиваем количество результатов
+    return products[:limit]
 
 
 async def save_product_match(
@@ -442,9 +481,10 @@ async def format_issues_list(
     # Создаем заголовок
     message = f"❗ <b>Items to review — page {page+1} / {total_pages}</b>\n\n<code>"
     
-    # Формируем таблицу
-    # Заголовок таблицы
-    message += f"{'#':<3} {'Invoice item':<20} {'Issue':<15}\n"
+    # Формируем таблицу с новым дизайном
+    # Заголовок таблицы с 4 колонками: №, Наименование, Кол-во/Ед., Цена
+    message += f"{'№':<3} {'Наименование':<20} {'Кол-во/Ед.':<12} {'Цена':<8}\n"
+    message += f"{'-'*3} {'-'*20} {'-'*12} {'-'*8}\n"
     
     # Получаем позиции для текущей страницы
     start_idx = page * PAGE_SIZE
@@ -458,30 +498,31 @@ async def format_issues_list(
         
         # Получаем название для отображения
         item_name = original.get("name", "Unknown")
-        unit = original.get("unit", "")
-        if unit:
-            item_name += f" {unit}"
         
         # Ограничиваем длину названия
         if len(item_name) > 20:
             item_name = item_name[:17] + "..."
         
-        # Получаем тип проблемы
-        issue_type = issue.get("issue", "Unknown issue")
+        # Форматируем столбец количества и единицы измерения
+        quantity = original.get("quantity", 0)
+        unit = original.get("unit", "")
+        qty_unit = f"{quantity} {unit}".strip()
+        
+        # Форматируем столбец цены
+        price = original.get("price", "")
+        price_display = ""
+        if price:
+            try:
+                price_float = float(price)
+                price_display = f"{price_float:,.2f}"
+            except (ValueError, TypeError):
+                price_display = str(price)
+        
+        # Получаем иконку проблемы
         icon = get_issue_icon(issue)
         
-        # Определяем тип проблемы для отображения
-        if "Not in database" in issue_type:
-            display_issue = "Not in DB"
-        elif "incorrect match" in issue_type:
-            display_issue = "Low confidence"
-        elif "Unit" in issue_type:
-            display_issue = "Unit mismatch"
-        else:
-            display_issue = issue_type[:15]  # Ограничиваем длину
-        
         # Добавляем строку в таблицу
-        message += f"{index:<3} {item_name:<20} {icon} {display_issue:<15}\n"
+        message += f"{index:<3} {item_name:<20} {qty_unit:<12} {price_display:<8} {icon}\n"
     
     message += "</code>"
     
@@ -532,7 +573,6 @@ async def format_issues_list(
     ])
     
     return message, InlineKeyboardMarkup(inline_keyboard=buttons)
-
 
 async def format_issue_edit(
     issue: Dict[str, Any]
@@ -592,22 +632,24 @@ async def format_issue_edit(
     message += "\nSelect an action below to fix the issue:"
     
     # Создаем клавиатуру
-    buttons = [
-        # Первый ряд - основные действия
-        [
-            InlineKeyboardButton(text="📦 Product", callback_data=f"{CB_ACTION_PREFIX}name"),
-            InlineKeyboardButton(text="🔢 Quantity", callback_data=f"{CB_ACTION_PREFIX}qty"),
-            InlineKeyboardButton(text="📏 Unit", callback_data=f"{CB_ACTION_PREFIX}unit")
-        ]
-    ]
+    buttons = []
+    
+    # ВАЖНО: Всегда добавляем кнопку Edit для всех типов позиций
+    buttons.append([
+        InlineKeyboardButton(text="✏️ Edit", callback_data=f"{CB_ACTION_PREFIX}edit_name")
+    ])
+    
+    # Первый ряд - основные действия
+    buttons.append([
+        InlineKeyboardButton(text="📦 Product", callback_data=f"{CB_ACTION_PREFIX}name"),
+        InlineKeyboardButton(text="🔢 Quantity", callback_data=f"{CB_ACTION_PREFIX}qty"),
+        InlineKeyboardButton(text="📏 Unit", callback_data=f"{CB_ACTION_PREFIX}unit")
+    ])
     
     # Добавляем дополнительные действия в зависимости от типа проблемы
     additional_row = []
     
     if "Not in database" in issue_type:
-        additional_row.append(
-            InlineKeyboardButton(text="✏️ Edit Name", callback_data=f"{CB_ACTION_PREFIX}edit_name")
-        )
         additional_row.append(
             InlineKeyboardButton(text="➕ Create new", callback_data=f"{CB_ACTION_PREFIX}add_new")
         )
@@ -627,7 +669,6 @@ async def format_issue_edit(
     ])
     
     return message, InlineKeyboardMarkup(inline_keyboard=buttons)
-
 
 async def format_product_select(
     products: List[Dict[str, Any]],
