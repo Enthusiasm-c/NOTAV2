@@ -21,7 +21,8 @@ from aiogram.types import (
     Message, 
     CallbackQuery, 
     InlineKeyboardMarkup, 
-    InlineKeyboardButton
+    InlineKeyboardButton,
+    ForceReply
 )
 
 # Адаптивный импорт для разных версий aiogram
@@ -59,6 +60,7 @@ from app.models.product import Product
 from app.models.invoice import Invoice
 from app.models.invoice_item import InvoiceItem
 from app.models.product_name_lookup import ProductNameLookup
+from app.models.invoice_state import InvoiceEditStates
 
 # Импортируем модули обработки единиц измерения
 try:
@@ -147,20 +149,11 @@ except ImportError:
         return None
 
 from app.config import settings
+from app.utils.change_logger import log_change, log_delete, log_save_new
+from app.utils.keyboards import kb_field_selector, kb_after_edit, FieldCallback, IssueCallback
 
 logger = structlog.get_logger()
 router = Router(name="issue_editor")
-# ───────────────────────── FSM States ────────────────────────
-class InvoiceEditStates(StatesGroup):
-    """Состояния FSM для редактирования накладной."""
-    summary = State()            # А. Сводка накладной
-    issue_list = State()         # B. Список проблемных позиций
-    issue_edit = State()         # C. Редактор конкретной позиции
-    field_input = State()        # D. Ввод значения поля
-    product_select = State()     # E. Выбор товара из списка
-    confirm = State()            # F. Финальное подтверждение
-    bulk_add = State()           # G. Массовое добавление товаров
-
 
 # ───────────────────────── Constants ────────────────────────
 # Размер страницы для пагинации
@@ -350,7 +343,6 @@ async def save_product_match(
                     parsed_name=parsed_name, 
                     product_id=product_id)
         return False
-
 # ───────────────────────── UI Formatting Functions ────────────────────────
 
 async def format_summary_message(data: Dict[str, Any]) -> Tuple[str, InlineKeyboardMarkup]:
@@ -614,6 +606,9 @@ async def format_issue_edit(
     
     if "Not in database" in issue_type:
         additional_row.append(
+            InlineKeyboardButton(text="✏️ Edit Name", callback_data=f"{CB_ACTION_PREFIX}edit_name")
+        )
+        additional_row.append(
             InlineKeyboardButton(text="➕ Create new", callback_data=f"{CB_ACTION_PREFIX}add_new")
         )
     
@@ -632,6 +627,7 @@ async def format_issue_edit(
     ])
     
     return message, InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
 async def format_product_select(
     products: List[Dict[str, Any]],
@@ -791,6 +787,116 @@ async def format_final_preview(
     return message, InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def format_issue_card(issue: Dict[str, Any], is_edited: bool = False) -> str:
+    """
+    Format an issue card with HTML markup.
+    
+    Args:
+        issue: The issue data dictionary
+        is_edited: Whether the issue has been edited
+        
+    Returns:
+        HTML formatted card text
+    """
+    index = issue.get("index", 0)
+    original = issue.get("original", {})
+    
+    name = original.get("name", "Unknown")
+    quantity = original.get("quantity", 0)
+    unit = original.get("unit", "")
+    price = original.get("price", "")
+    sum_val = original.get("sum", "")
+    
+    # Determine issue type and icon
+    issue_type = issue.get("issue", "Unknown issue")
+    
+    if "Not in database" in issue_type:
+        icon = "⚠"
+        issue_description = "Not in database"
+    elif "incorrect match" in issue_type:
+        icon = "❔"
+        issue_description = "Low confidence match"
+    elif "Unit" in issue_type:
+        icon = "🔄"
+        issue_description = "Unit measurement discrepancy"
+    else:
+        icon = "❓"
+        issue_description = issue_type
+        
+    # Add edit indicator if needed
+    edit_prefix = "📝 " if is_edited else ""
+    
+    # Build the message
+    message = f"{edit_prefix}<b>Row {index}:</b> {name}\n\n"
+    message += f"<b>Problem:</b> {icon} {issue_description}\n"
+    message += f"<b>Qty:</b> {quantity} {unit}\n"
+    
+    if price:
+        try:
+            price_float = float(price)
+            message += f"<b>Price:</b> {price_float:.2f}\n"
+        except (ValueError, TypeError):
+            message += f"<b>Price:</b> {price or '—'}\n"
+    else:
+        message += "<b>Price:</b> —\n"
+        
+    if sum_val:
+        try:
+            sum_float = float(sum_val)
+            message += f"<b>Sum:</b> {sum_float:.2f}\n"
+        except (ValueError, TypeError):
+            message += f"<b>Sum:</b> {sum_val}\n"
+    else:
+        # Calculate sum if possible
+        if price and quantity:
+            try:
+                price_float = float(price)
+                qty_float = float(quantity)
+                message += f"<b>Sum:</b> {price_float * qty_float:.2f}\n"
+            except (ValueError, TypeError):
+                message += "<b>Sum:</b> —\n"
+        else:
+            message += "<b>Sum:</b> —\n"
+    
+    message += "\n<i>Select an action:</i>"
+    
+    return message
+
+
+def format_field_prompt(field: str, current_value: str) -> str:
+    """
+    Format a prompt for editing a specific field.
+    
+    Args:
+        field: The field name being edited
+        current_value: The current value of the field
+        
+    Returns:
+        HTML formatted prompt text
+    """
+    field_labels = {
+        "name": "name",
+        "qty": "quantity",
+        "unit": "unit of measurement",
+        "price": "price"
+    }
+    
+    field_label = field_labels.get(field, field)
+    
+    message = f"<b>Enter new {field_label}:</b>\n\n"
+    message += f"Current value: {current_value}\n\n"
+    
+    field_hints = {
+        "name": "Enter product name (max 100 characters)",
+        "qty": "Enter numeric quantity (e.g., 5 or 2.5)",
+        "unit": "Enter unit of measurement (e.g., kg, l, pcs)",
+        "price": "Enter price (numbers only)"
+    }
+    
+    if field in field_hints:
+        message += f"<i>{field_hints[field]}</i>"
+        
+    return message
 # ───────────────────────── Handlers ───────────────────────────
 @router.callback_query(Text(["inv_edit", CB_REVIEW]))
 async def cb_start_review(c: CallbackQuery, state: FSMContext):
@@ -986,6 +1092,18 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
             logger.error("Failed to edit message", error=str(e))
             await c.message.answer(message, reply_markup=keyboard, parse_mode="HTML")
     
+    elif action == "edit_name":
+        # Переход к редактированию имени
+        await state.set_state(InvoiceEditStates.field_input)
+        await state.update_data(field="name")
+        
+        # Отправляем сообщение с запросом
+        msg = format_field_prompt("name", original.get("name", ""))
+        
+        # Отправляем с ForceReply для получения ответа
+        await c.message.edit_text(msg, parse_mode="HTML")
+        await c.message.answer("Введите новое название:", reply_markup=ForceReply())
+    
     elif action == "qty":
         # Переход к вводу количества
         await state.set_state(InvoiceEditStates.field_input)
@@ -1066,6 +1184,21 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
             fixed_issues[position_idx] = {"action": "delete"}
             await state.update_data(fixed_issues=fixed_issues)
             
+            # Логируем удаление
+            try:
+                invoice_id = invoice_data.get("id", 0)
+                user_id = c.from_user.id if c.from_user else 0
+                item_name = original.get("name", "")
+                
+                await log_delete(
+                    invoice_id=invoice_id,
+                    row_idx=position_idx,
+                    user_id=user_id,
+                    item_name=item_name
+                )
+            except Exception as e:
+                logger.error("Failed to log delete action", error=str(e))
+            
             # Обновляем список проблем (удаляем решенную)
             current_issues = [issue for i, issue in enumerate(issues) if i != issue_idx]
             await state.update_data(current_issues=current_issues)
@@ -1097,8 +1230,8 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
                 await c.message.answer(message, reply_markup=keyboard, parse_mode="HTML")
         else:
             await c.answer("❌ Ошибка при удалении позиции.")
-    
-    elif action == "convert":
+
+elif action == "convert":
         # Конвертация единиц измерения
         product = selected_issue.get("product")
         if not product:
@@ -1205,13 +1338,73 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
     
     elif action == "add_new":
         # Добавление нового товара
-        await c.answer("⚠️ Функция добавления нового товара находится в разработке.")
+        invoice_data = data.get("invoice", {})
+        position_idx = selected_issue.get("index", 0) - 1
+        
+        # Получаем данные позиции
+        if "positions" in invoice_data and 0 <= position_idx < len(invoice_data["positions"]):
+            # Отмечаем, что эта позиция будет добавлена как новый товар
+            fixed_issues = data.get("fixed_issues", {})
+            if not fixed_issues:
+                fixed_issues = {}
+            
+            fixed_issues[position_idx] = {"action": "new_product"}
+            await state.update_data(fixed_issues=fixed_issues)
+            
+            # Логируем создание нового товара
+            try:
+                invoice_id = invoice_data.get("id", 0)
+                user_id = c.from_user.id if c.from_user else 0
+                item_name = original.get("name", "")
+                
+                await log_save_new(
+                    invoice_id=invoice_id,
+                    row_idx=position_idx,
+                    user_id=user_id,
+                    item_name=item_name
+                )
+            except Exception as e:
+                logger.error("Failed to log save_new action", error=str(e))
+            
+            # Обновляем список проблем (удаляем решенную)
+            issues = data.get("current_issues", [])
+            issue_idx = data.get("selected_issue_idx", 0)
+            current_issues = [issue for i, issue in enumerate(issues) if i != issue_idx]
+            await state.update_data(current_issues=current_issues)
+            
+            # Возвращаемся к списку проблем или к подтверждению
+            if not current_issues:
+                await state.set_state(InvoiceEditStates.confirm)
+                
+                message, keyboard = await format_final_preview(
+                    invoice_data, 
+                    data.get("issues", []), 
+                    fixed_issues
+                )
+            else:
+                await state.set_state(InvoiceEditStates.issue_list)
+                
+                message, keyboard = await format_issues_list(
+                    {"issues": current_issues}, 
+                    page=data.get("current_page", 0)
+                )
+            
+            # Добавляем сообщение об успешном добавлении
+            message = f"✅ Товар <b>{original.get('name', '')}</b> сохранен как новый!\n\n" + message
+            
+            # Отправляем сообщение
+            try:
+                await c.message.edit_text(message, reply_markup=keyboard, parse_mode="HTML")
+            except Exception as e:
+                logger.error("Failed to edit message", error=str(e))
+                await c.message.answer(message, reply_markup=keyboard, parse_mode="HTML")
+        else:
+            await c.answer("❌ Ошибка при добавлении нового товара.")
     
     else:
         await c.answer(f"⚠️ Неизвестное действие: {action}")
     
     await c.answer()
-
 
 # ───────────────────────── Обработчик выбора товара ────────────────────────
 @router.callback_query(lambda c: c.data and (
@@ -1904,3 +2097,89 @@ async def process_field_input(message: Message, state: FSMContext):
         message_text, keyboard = await format_product_select(products, search_query, page=0)
         
         await message.answer(message_text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif field == "name":
+        # Обработка ввода имени
+        new_name = message.text.strip()
+        
+        if not new_name:
+            await message.reply("❌ Имя не может быть пустым.")
+            return
+        
+        if len(new_name) > 100:
+            await message.reply("❌ Имя слишком длинное (максимум 100 символов).")
+            return
+        
+        # Получаем данные позиции
+        selected_issue = data.get("selected_issue", {})
+        invoice_data = data.get("invoice", {})
+        positions = invoice_data.get("positions", [])
+        
+        # Находим позицию
+        issue_idx = data.get("selected_issue_idx", 0)
+        issues = data.get("current_issues", [])
+        
+        position_idx = selected_issue.get("index", 0) - 1
+        
+        if 0 <= position_idx < len(positions):
+            # Сохраняем старое имя
+            old_name = positions[position_idx].get("name", "")
+            
+            # Обновляем имя
+            positions[position_idx]["name"] = new_name
+            
+            # Обновляем данные в состоянии
+            invoice_data["positions"] = positions
+            await state.update_data(invoice=invoice_data)
+            
+            # Логируем изменение
+            try:
+                invoice_id = invoice_data.get("id", 0)
+                user_id = message.from_user.id if message.from_user else 0
+                
+                await log_change(
+                    invoice_id=invoice_id,
+                    row_idx=position_idx,
+                    user_id=user_id,
+                    field="name",
+                    old=old_name,
+                    new=new_name
+                )
+            except Exception as e:
+                logger.error("Failed to log name change", error=str(e))
+            
+            # Добавляем в список исправленных позиций
+            fixed_issues = data.get("fixed_issues", {})
+            if not fixed_issues:
+                fixed_issues = {}
+            
+            fixed_issues[position_idx] = {
+                "action": "change_name",
+                "old_name": old_name,
+                "new_name": new_name
+            }
+            await state.update_data(fixed_issues=fixed_issues)
+            
+            # Поиск соответствий в базе данных
+            async with SessionLocal() as session:
+                products = await get_products_by_name(session, new_name[:5], limit=5)
+            
+            # Если есть подходящие товары, предлагаем выбрать
+            if products:
+                await state.update_data(products=products, current_page=0, search_query=new_name[:5])
+                await state.set_state(InvoiceEditStates.product_select)
+                
+                message_text, keyboard = await format_product_select(products, new_name[:5], page=0)
+                message_text = f"✅ Имя изменено на <b>{new_name}</b>.\n\nНайдено несколько подходящих товаров:\n\n" + message_text
+                
+                await message.answer(message_text, reply_markup=keyboard, parse_mode="HTML")
+            else:
+                # Если нет соответствий, просто возвращаемся к редактированию
+                await state.set_state(InvoiceEditStates.issue_edit)
+                
+                message_text, keyboard = await format_issue_edit(selected_issue)
+                message_text = f"✅ Имя изменено на <b>{new_name}</b>.\nСоответствий в базе не найдено.\n\n" + message_text
+                
+                await message.answer(message_text, reply_markup=keyboard, parse_mode="HTML")
+        else:
+            await message.reply("❌ Ошибка при обновлении имени.")
