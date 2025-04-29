@@ -56,8 +56,84 @@ from app.routers.gpt_parsing import parse
 # Импортируем unified_match для работы с сопоставлением товаров
 from app.routers.fuzzy_match import fuzzy_match_product, find_similar_products
 
-# Импортируем утилиты для работы с единицами измерения
-from app.utils.unit_converter import normalize_unit, is_compatible_unit
+# Импортируем модуль unit_converter, если он доступен
+try:
+    from app.utils.unit_converter import normalize_unit, is_compatible_unit
+    UNIT_CONVERTER_AVAILABLE = True
+except ImportError:
+    UNIT_CONVERTER_AVAILABLE = False
+    # Встроенные функции для работы с единицами измерения
+    # (копия из unit_converter для обеспечения прямой работоспособности)
+    
+    # Unit normalization dictionary
+    UNIT_ALIASES: Dict[str, str] = {
+        # English volume units
+        "l": "l", "ltr": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l",
+        "ml": "ml", "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
+        
+        # English weight units
+        "kg": "kg", "kilo": "kg", "kilogram": "kg", "kilograms": "kg",
+        "g": "g", "gr": "g", "gram": "g", "grams": "g",
+        
+        # English countable units
+        "pcs": "pcs", "pc": "pcs", "piece": "pcs", "pieces": "pcs",
+        "pack": "pack", "package": "pack", "pkg": "pack",
+        "box": "box", "boxes": "box",
+        
+        # Indonesian volume units
+        "liter": "l", "lt": "l",
+        "mililiter": "ml", "mili": "ml",
+        
+        # Indonesian weight units
+        "kilogram": "kg", "kilo": "kg",
+        "gram": "g",
+        
+        # Indonesian countable units
+        "buah": "pcs", "biji": "pcs", "pcs": "pcs", "potong": "pcs",
+        "paket": "pack", "pak": "pack",
+        "kotak": "box", "dus": "box", "kardus": "box",
+        
+        # Common abbreviations
+        "ea": "pcs",  # each
+        "btl": "pcs",  # bottle/botol
+    }
+    
+    def normalize_unit(unit_str: str) -> str:
+        """
+        Normalize unit string to standard format.
+        """
+        if not unit_str:
+            return ""
+        
+        unit_str = unit_str.lower().strip()
+        return UNIT_ALIASES.get(unit_str, unit_str)
+    
+    def is_compatible_unit(unit1: str, unit2: str) -> bool:
+        """
+        Check if two units are compatible (can be converted between each other).
+        """
+        unit1 = normalize_unit(unit1)
+        unit2 = normalize_unit(unit2)
+        
+        # Same normalized units are always compatible
+        if unit1 == unit2:
+            return True
+        
+        # Check unit categories
+        volume_units = {"l", "ml"}
+        weight_units = {"kg", "g"}
+        countable_units = {"pcs", "pack", "box"}
+        
+        if unit1 in volume_units and unit2 in volume_units:
+            return True
+        if unit1 in weight_units and unit2 in weight_units:
+            return True
+        if unit1 in countable_units and unit2 in countable_units:
+            # Countable units technically aren't directly convertible without 
+            # additional knowledge (e.g., how many pieces in a pack)
+            return False
+        
+        return False
 
 # Импортируем функции для создания UI
 from app.utils.markdown import make_invoice_preview, make_issue_list
