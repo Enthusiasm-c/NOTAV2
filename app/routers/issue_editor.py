@@ -1131,7 +1131,7 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         if product and product.unit and product.unit not in common_units:
             common_units.insert(0, product.unit)
         
-elif action == "unit":
+    elif action == "unit":
         # Переход к выбору единицы измерения
         await state.set_state(InvoiceEditStates.field_input)
         await state.update_data(field="unit")
