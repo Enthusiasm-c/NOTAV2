@@ -1129,20 +1129,20 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
         quantity = float(original.get("quantity", 0))
         converted = convert(quantity, invoice_unit, db_unit)
 
-if converted is None:
+        if converted is None:
             await c.answer("❌ Ошибка при конвертации.")
             return
-        
+
         # Обновляем данные
         invoice_data = data.get("invoice", {})
         positions = invoice_data.get("positions", [])
         position_idx = selected_issue.get("index", 0) - 1
-        
+
         if 0 <= position_idx < len(positions):
             # Обновляем позицию
             positions[position_idx]["quantity"] = converted
             positions[position_idx]["unit"] = db_unit
-            
+
             # Пересчитываем сумму, если есть цена
             if price := positions[position_idx].get("price"):
                 try:
@@ -1150,52 +1150,49 @@ if converted is None:
                     positions[position_idx]["sum"] = converted * price_float
                 except (ValueError, TypeError):
                     pass
-            
+
             # Обновляем данные в состоянии
             invoice_data["positions"] = positions
             await state.update_data(invoice=invoice_data)
-            
+
             # Добавляем в список исправленных позиций
-            fixed_issues = data.get("fixed_issues", {})
-            if not fixed_issues:
-                fixed_issues = {}
-            
+            fixed_issues = data.get("fixed_issues", {}) or {}
             fixed_issues[position_idx] = {
-                "action": "convert_unit",
-                "from_unit": invoice_unit,
-                "to_unit": db_unit,
+                "action":       "convert_unit",
+                "from_unit":    invoice_unit,
+                "to_unit":      db_unit,
                 "old_quantity": quantity,
-                "new_quantity": converted
+                "new_quantity": converted,
             }
             await state.update_data(fixed_issues=fixed_issues)
-            
-            # Обновляем список проблем (удаляем решенную)
-            issues = data.get("current_issues", [])
-            issue_idx = data.get("selected_issue_idx", 0)
-            current_issues = [issue for i, issue in enumerate(issues) if i != issue_idx]
-            await state.update_data(current_issues=current_issues)
-            
+
+            # Обновляем список проблем (удаляем решённую)
+            issues      = data.get("current_issues", [])
+            issue_idx   = data.get("selected_issue_idx", 0)
+            new_issues  = [issue for i, issue in enumerate(issues) if i != issue_idx]
+            await state.update_data(current_issues=new_issues)
+
             # Возвращаемся к списку проблем или к подтверждению
-            if not current_issues:
-                # Если проблем больше нет, переходим к подтверждению
+            if not new_issues:
                 await state.set_state(InvoiceEditStates.confirm)
-                
                 message, keyboard = await format_final_preview(
-                    invoice_data, 
-                    data.get("issues", []), 
-                    fixed_issues
+                    invoice_data,
+                    data.get("issues", []),
+                    fixed_issues,
                 )
             else:
-                # Если есть еще проблемы, возвращаемся к списку
                 await state.set_state(InvoiceEditStates.issue_list)
-                
                 message, keyboard = await format_issues_list(
-                    {"issues": current_issues}, 
-                    page=data.get("current_page", 0)
+                    {"issues": new_issues},
+                    page=data.get("current_page", 0),
                 )
-            
+
             # Добавляем информацию о конвертации
-            conv_msg = f"✅ Конвертация выполнена: {quantity} {invoice_unit} → {converted} {db_unit}\n\n" + message
+            conv_msg = (
+                f"✅ Конвертация выполнена: {quantity} {invoice_unit} → "
+                f"{converted} {db_unit}\n\n"
+                + message
+            )
             
             # Отправляем сообщение
             try:
