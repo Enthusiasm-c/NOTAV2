@@ -1400,39 +1400,46 @@ if action == "add_new":
             current_issues = [issue for i, issue in enumerate(issues) if i != issue_idx]
             await state.update_data(current_issues=current_issues)
             
-            # Возвращаемся к списку проблем или к подтверждению
-            if not current_issues:
-                await state.set_state(InvoiceEditStates.confirm)
-                
-                message, keyboard = await format_final_preview(
-                    invoice_data, 
-                    data.get("issues", []), 
-                    fixed_issues
-                )
-            else:
-                await state.set_state(InvoiceEditStates.issue_list)
-                
-                message, keyboard = await format_issues_list(
-                    {"issues": current_issues}, 
-                    page=data.get("current_page", 0)
-                )
-            
-            # Добавляем сообщение об успешном добавлении
-            message = f"✅ Товар <b>{original.get('name', '')}</b> сохранен как новый!\n\n" + message
-            
-            # Отправляем сообщение
-            try:
-                await c.message.edit_text(message, reply_markup=keyboard, parse_mode="HTML")
-            except Exception as e:
-                logger.error("Failed to edit message", error=str(e))
-                await c.message.answer(message, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await c.answer("❌ Ошибка при добавлении нового товара.")
-    
-    else:
-        await c.answer(f"⚠️ Неизвестное действие: {action}")
-    
-    await c.answer()
+  # Вернуться к списку проблем или к финальному подтверждению
+if not current_issues:
+    await state.set_state(InvoiceEditStates.confirm)
+
+    message, keyboard = await format_final_preview(
+        invoice_data,
+        data.get("issues", []),
+        fixed_issues,
+    )
+else:
+    await state.set_state(InvoiceEditStates.issue_list)
+
+    message, keyboard = await format_issues_list(
+        {"issues": current_issues},
+        page=data.get("current_page", 0),
+    )
+
+# Сообщение об успешном добавлении товара
+message = (
+    f"✅ Товар <b>{original.get('name', '')}</b> сохранён как новый!\n\n"
+    + message
+)
+
+# Пытаемся обновить прежнее сообщение; если не удаётся — шлём новое
+try:
+    await c.message.edit_text(
+        message,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+except Exception as e:
+    logger.error("Failed to edit message", error=str(e))
+    await c.message.answer(
+        message,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+
+# Ответ на callback, чтобы Telegram убрал «часики»
+await c.answer()
 
 # ───────────────────────── Обработчик выбора товара ────────────────────────
 @router.callback_query(lambda c: c.data and (
