@@ -331,7 +331,13 @@ def make_improved_invoice_markdown(data, issues, parser_comment):
     try:
         # Пытаемся использовать новый модуль форматирования
         from app.utils.markdown import make_invoice_preview
-        return make_invoice_preview(data, issues, {}, True)
+    
+    return make_invoice_preview(
+        data,
+        issues,
+        fixed_issues={},          # пока пусто
+        show_all_issues=True,     # сразу показать список проблем
+        )
     except ImportError:
         # Если модуль недоступен, используем наш улучшенный формат
         positions = data.get("positions", [])
