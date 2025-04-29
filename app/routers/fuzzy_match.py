@@ -1,279 +1,180 @@
 """
-Усовершенствованный модуль нечеткого поиска товаров.
+Модуль для нечеткого поиска товаров по названию в базе данных.
 
-Улучшения:
-1. Игнорирование регистра при поиске
-2. Фильтрация полуфабрикатов (s/f) из предложений
-3. Сохранение совпадений для будущего использования
-4. Улучшенные алгоритмы сопоставления
+Использует RapidFuzz для поиска товаров, наиболее похожих на введенное название.
 """
 
 from __future__ import annotations
 
-from typing import Tuple, Optional, List, Dict, Any
-import re
 import structlog
+from typing import List, Tuple, Dict, Any, Optional
 
 from rapidfuzz import fuzz, process
-from sqlalchemy import select, insert, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
-from app.models.product_name_lookup import ProductNameLookup
+from app.db import SessionLocal
 from app.models.product import Product
+from app.models.product_name_lookup import ProductNameLookup
 
 logger = structlog.get_logger()
 
-# Константы для настройки алгоритма
-SEMIFINISHED_PATTERNS = [r's/f', r's/finished', r'semi.?finished', r'semi.?fabricated']
-MIN_CONFIDENCE_FOR_LEARNING = 0.90  # Минимальная уверенность для автообучения
+# Минимальный порог схожести для включения в результаты
+DEFAULT_THRESHOLD = 0.7
 
-def clean_name_for_comparison(name: str) -> str:
-    """
-    Подготавливает строку названия для сравнения:
-    - Приводит к нижнему регистру
-    - Убирает лишние пробелы
-    - Убирает знаки пунктуации
-    """
-    if not name:
-        return ""
-    
-    # Приводим к нижнему регистру
-    name = name.lower()
-    
-    # Удаляем лишние пробелы
-    name = re.sub(r'\s+', ' ', name).strip()
-    
-    # Удаляем или заменяем знаки пунктуации
-    name = re.sub(r'[.,;:\-_()]', ' ', name)
-    name = re.sub(r'\s+', ' ', name).strip()
-    
-    return name
-
-
-def is_semifinished(name: str) -> bool:
-    """
-    Проверяет, является ли товар полуфабрикатом по маркерам в названии.
-    
-    :param name: название товара
-    :return: True если это полуфабрикат, иначе False
-    """
-    name_lower = name.lower()
-    return any(re.search(pattern, name_lower) for pattern in SEMIFINISHED_PATTERNS)
-
-
-async def save_match_to_lookup(
-    session: AsyncSession,
-    parsed_name: str,
-    product_id: int,
-    confidence: float,
-) -> None:
-    """
-    Сохраняет сопоставление в таблицу lookup для будущего использования.
-    
-    :param session: асинхронная сессия SQLAlchemy
-    :param parsed_name: строка из OCR/Parsing
-    :param product_id: ID сопоставленного товара
-    :param confidence: уверенность совпадения (0-1)
-    """
-    if confidence < MIN_CONFIDENCE_FOR_LEARNING:
-        return  # Не сохраняем сопоставления с низкой уверенностью
-    
-    # Проверяем, есть ли уже такое сопоставление
-    res = await session.execute(
-        select(ProductNameLookup.id)
-        .where(ProductNameLookup.alias == parsed_name)
-    )
-    existing_id = res.scalar_one_or_none()
-    
-    try:
-        if existing_id:
-            # Обновляем существующее сопоставление
-            await session.execute(
-                update(ProductNameLookup)
-                .where(ProductNameLookup.id == existing_id)
-                .values(product_id=product_id)
-            )
-        else:
-            # Создаем новое сопоставление
-            await session.execute(
-                insert(ProductNameLookup).values(
-                    alias=parsed_name,
-                    product_id=product_id,
-                )
-            )
-        
-        # Коммитим изменения
-        await session.commit()
-        logger.info("Saved match to lookup table", 
-                   parsed_name=parsed_name, 
-                   product_id=product_id, 
-                   confidence=confidence)
-    except Exception as e:
-        await session.rollback()
-        logger.error("Failed to save match to lookup table", 
-                    error=str(e),
-                    parsed_name=parsed_name,
-                    product_id=product_id)
+# Максимальное количество возвращаемых похожих товаров
+MAX_SIMILAR_PRODUCTS = 3
 
 
 async def fuzzy_match_product(
-    session: AsyncSession,
-    parsed_name: str,
-    threshold: float | None = None,
-    exclude_semifinished: bool = True,
+    session: AsyncSession, 
+    name: str, 
+    threshold: Optional[float] = None
 ) -> Tuple[Optional[int], float]:
     """
-    Улучшенный поиск товара по распознанному названию.
+    Находит наиболее подходящий товар в базе данных с помощью нечеткого поиска.
     
-    :param session: асинхронная сессия SQLAlchemy
-    :param parsed_name: строка из OCR/Parsing
-    :param threshold: кастомный порог RapidFuzz (0–1); если None → settings
-    :param exclude_semifinished: исключать ли полуфабрикаты из результатов
-    :return: (product_id | None, confidence 0–1)
+    Args:
+        session: Асинхронная сессия SQLAlchemy
+        name: Название товара для поиска
+        threshold: Порог схожести, ниже которого товары игнорируются
+    
+    Returns:
+        Tuple[id товара или None, степень схожести]
     """
-    if not parsed_name:
+    if not name:
         return None, 0.0
     
-    threshold = threshold or settings.fuzzy_threshold
+    if threshold is None:
+        threshold = DEFAULT_THRESHOLD
     
-    # Нормализуем имя для поиска
-    normalized_name = clean_name_for_comparison(parsed_name)
+    # Сначала пытаемся найти в lookup таблице
+    stmt = select(ProductNameLookup).where(ProductNameLookup.alias == name)
+    result = await session.execute(stmt)
+    lookup = result.scalar_one_or_none()
     
-    # ───────────────────────── 1. lookup по памяти ────────────────────────
-    # Сначала ищем по точному совпадению
-    res = await session.execute(
-        select(ProductNameLookup.product_id).where(
-            ProductNameLookup.alias == parsed_name
-        )
-    )
-    product_id = res.scalar_one_or_none()
-    if product_id is not None:
-        return product_id, 1.0
+    if lookup:
+        logger.info("Product found in lookup table", 
+                   name=name, product_id=lookup.product_id)
+        return lookup.product_id, 1.0  # Точное совпадение
     
-    # Затем ищем по нормализованному имени
-    res = await session.execute(
-        select(ProductNameLookup.product_id, ProductNameLookup.alias)
-        .where(ProductNameLookup.alias.ilike(f"%{normalized_name}%"))
-    )
-    lookup_matches = res.all()
+    # Загружаем все товары
+    stmt = select(Product)
+    result = await session.execute(stmt)
+    products = result.scalars().all()
     
-    # Если нашли совпадения в lookup, используем лучшее из них
-    if lookup_matches:
-        best_match = None
-        best_score = 0
-        
-        for lookup_product_id, alias in lookup_matches:
-            normalized_alias = clean_name_for_comparison(alias)
-            score = fuzz.ratio(normalized_name, normalized_alias) / 100.0
-            
-            if score > best_score:
-                best_score = score
-                best_match = lookup_product_id
-        
-        if best_match and best_score >= threshold:
-            return best_match, best_score
-    
-    # ──────────────────────── 2. RapidFuzz по каталогу ────────────────────
-    rows = await session.execute(select(Product.id, Product.name))
-    candidates = list(rows)  # [(id, name), …]
-    
-    if not candidates:  # пустой каталог
+    if not products:
         return None, 0.0
     
-    # Фильтруем полуфабрикаты, если требуется
-    if exclude_semifinished:
-        filtered_candidates = [(pid, name) for pid, name in candidates 
-                               if not is_semifinished(name)]
-        if filtered_candidates:  # Используем отфильтрованный список, только если он не пустой
-            candidates = filtered_candidates
-    
-    # Подготавливаем нормализованные имена кандидатов для сравнения
-    names_for_matching = [clean_name_for_comparison(name) for _, name in candidates]
+    # Создаем словарь для поиска
+    choices = {p.id: p.name for p in products}
     
     # Выполняем нечеткий поиск
-    match = process.extractOne(normalized_name, names_for_matching, scorer=fuzz.ratio)
+    matches = process.extract(
+        name, 
+        choices=choices.values(),
+        scorer=fuzz.token_sort_ratio, 
+        limit=MAX_SIMILAR_PRODUCTS
+    )
     
-    if match:
-        # Обработка результата extractOne
-        if len(match) >= 3:
-            matched_name, score_raw, idx = match  # score_raw 0–100, idx это индекс
-        else:
-            matched_name, score_raw = match  # score_raw 0–100
-            idx = names_for_matching.index(matched_name)
-        
-        confidence = score_raw / 100.0
-        if confidence >= threshold:
-            # Находим product_id по индексу в исходном списке
-            product_id = candidates[idx][0]
-            
-            # Сохраняем совпадение для будущего использования
-            if confidence >= MIN_CONFIDENCE_FOR_LEARNING:
-                await save_match_to_lookup(session, parsed_name, product_id, confidence)
-            
-            return product_id, confidence
+    if not matches:
+        return None, 0.0
     
-    # ничего не подошло с нужным порогом
-    return None, 0.0
+    # Лучшее совпадение
+    best_match, best_score = matches[0]
+    normalized_score = best_score / 100.0  # Нормализуем до диапазона 0-1
+    
+    if normalized_score < threshold:
+        logger.debug("No matching product above threshold", 
+                    name=name, best_match=best_match, score=normalized_score)
+        return None, normalized_score
+    
+    # Находим ID товара по его имени
+    product_id = None
+    for pid, pname in choices.items():
+        if pname == best_match:
+            product_id = pid
+            break
+    
+    logger.info("Fuzzy matching product found", 
+               name=name, 
+               match=best_match, 
+               score=normalized_score,
+               product_id=product_id)
+    
+    return product_id, normalized_score
 
 
-async def get_product_suggestions(
-    session: AsyncSession,
-    parsed_name: str,
-    limit: int = 5,
-    exclude_semifinished: bool = True,
+async def find_similar_products(
+    session: AsyncSession, 
+    name: str, 
+    limit: int = MAX_SIMILAR_PRODUCTS,
+    threshold: float = DEFAULT_THRESHOLD
 ) -> List[Dict[str, Any]]:
     """
-    Получает список предложений товаров для выбора пользователем.
+    Находит список похожих товаров в базе данных.
     
-    :param session: асинхронная сессия SQLAlchemy
-    :param parsed_name: строка из OCR/Parsing
-    :param limit: максимальное количество предложений
-    :param exclude_semifinished: исключать ли полуфабрикаты
-    :return: список словарей с данными о товарах и степени схожести
+    Args:
+        session: Асинхронная сессия SQLAlchemy
+        name: Название товара для поиска
+        limit: Максимальное количество результатов
+        threshold: Минимальный порог схожести
+    
+    Returns:
+        Список словарей с информацией о похожих товарах
     """
-    if not parsed_name:
+    if not name:
         return []
     
-    # Нормализуем имя для поиска
-    normalized_name = clean_name_for_comparison(parsed_name)
+    # Загружаем все товары
+    stmt = select(Product)
+    result = await session.execute(stmt)
+    products = result.scalars().all()
     
-    # Получаем список всех продуктов
-    rows = await session.execute(select(Product.id, Product.name, Product.unit))
-    candidates = list(rows)  # [(id, name, unit), …]
-    
-    if not candidates:
+    if not products:
         return []
     
-    # Фильтруем полуфабрикаты, если требуется
-    if exclude_semifinished:
-        candidates = [(pid, name, unit) for pid, name, unit in candidates 
-                     if not is_semifinished(name)]
+    # Создаем словарь для поиска
+    product_dict = {p.id: p for p in products}
+    choices = {p.id: p.name for p in products}
     
-    # Подготавливаем нормализованные имена кандидатов для сравнения
-    names_for_matching = [clean_name_for_comparison(name) for _, name, _ in candidates]
+    # Выполняем нечеткий поиск
+    matches = process.extract(
+        name, 
+        choices=choices.values(),
+        scorer=fuzz.token_sort_ratio, 
+        limit=limit
+    )
     
-    # Получаем топ N лучших совпадений
-    matches = process.extract(normalized_name, names_for_matching, 
-                              scorer=fuzz.ratio, limit=limit)
+    # Фильтруем по порогу и создаем результат
+    result_products = []
     
-    # Формируем результат
-    suggestions = []
-    for match in matches:
-        if len(match) >= 3:
-            matched_name, score_raw, idx = match
-        else:
-            matched_name, score_raw = match
-            idx = names_for_matching.index(matched_name)
+    for match_name, score in matches:
+        normalized_score = score / 100.0
         
-        product_id, name, unit = candidates[idx]
-        confidence = score_raw / 100.0
+        if normalized_score < threshold:
+            continue
         
-        suggestions.append({
-            'id': product_id,
-            'name': name,
-            'unit': unit,
-            'confidence': confidence
+        # Находим товар по имени
+        product_id = None
+        for pid, pname in choices.items():
+            if pname == match_name:
+                product_id = pid
+                break
+        
+        if product_id is None:
+            continue
+        
+        product = product_dict[product_id]
+        
+        result_products.append({
+            "id": product.id,
+            "name": product.name,
+            "unit": product.unit,
+            "confidence": normalized_score
         })
     
-    return suggestions
+    # Сортируем по убыванию уверенности
+    result_products.sort(key=lambda p: p["confidence"], reverse=True)
+    
+    return result_products
