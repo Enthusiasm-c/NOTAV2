@@ -1,7 +1,7 @@
 """
-Основной модуль запуска Nota V2 с улучшенным редактором позиций.
+Main application module for Nota V2.
 
-Настраивает и запускает aiogram-роутеры, включая улучшенный редактор позиций.
+This module initializes the bot, routers, and database connections.
 """
 
 import asyncio
@@ -13,11 +13,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.config import settings
 from app.db import init_db, create_tables
 
-# Импортируем все необходимые роутеры
+# Import all necessary routers
 from app.routers.telegram_bot import router as telegram_router
-from app.routers.issue_editor_init import setup_issue_editor
+from app.routers.issue_editor import router as editor_router
 
-# Настраиваем логирование
+# Import enhanced editor handlers
+from app.routers.issue_editor_handlers import setup_edit_handlers
+
+# Configure structured logging
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
@@ -31,9 +34,9 @@ logger = structlog.get_logger()
 
 async def main():
     """
-    Основная функция запуска приложения.
+    Main function to initialize and run the bot.
     """
-    # Настраиваем логирование
+    # Set up standard logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -41,28 +44,24 @@ async def main():
     
     logger.info("Starting Nota V2")
     
-    # Инициализируем базу данных
+    # Initialize database
     await init_db()
     await create_tables()
     
-    # Инициализируем бота с FSM хранилищем
+    # Initialize the bot
     bot = Bot(token=settings.telegram_bot_token)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     
-    # Регистрируем роутеры
+    # Register base routers
     dp.include_router(telegram_router)
+    dp.include_router(editor_router)
     
-    # Настраиваем и подключаем улучшенный редактор позиций
-    issue_editor_router = setup_issue_editor()
-    dp.include_router(issue_editor_router)
+    # Register enhanced editor handlers
+    setup_edit_handlers(dp)
     
-    # Настраиваем остальные компоненты
-    # ... (Дополнительные роутеры)
-    
+    # Start the bot
     logger.info("Bot started")
-    
-    # Запускаем поллинг
     await dp.start_polling(bot)
 
 
