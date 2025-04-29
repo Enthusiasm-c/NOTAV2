@@ -1234,9 +1234,31 @@ async def cb_action_with_item(c: CallbackQuery, state: FSMContext):
 elif action == "convert":
         # Конвертация единиц измерения
         product = selected_issue.get("product")
+        # Проверяем наличие продукта перед попыткой конвертации
         if not product:
-            await c.answer("❌ Нет данных о товаре для конвертации.")
+            # Вместо простого сообщения об ошибке предлагаем варианты действий
+            msg = (
+                "❌ Нет данных о товаре для конвертации.\n\n"
+                "Для конвертации единиц измерения необходимо сначала сопоставить товар с базой данных."
+            )
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🔍 Найти в базе", callback_data=f"{CB_ACTION_PREFIX}name"),
+                    InlineKeyboardButton(text="✏️ Редактировать название", callback_data=f"{CB_ACTION_PREFIX}edit_name")
+                ],
+                [
+                    InlineKeyboardButton(text="➕ Создать новый", callback_data=f"{CB_ACTION_PREFIX}add_new"),
+                    InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)
+                ]
+            ])
+            
+            await c.message.edit_text(msg, reply_markup=keyboard, parse_mode="HTML")
+            await c.answer()
             return
+        
+        # Получаем данные для конвертации
+        invoice_unit = original.get("unit", "")
         
         # Получаем данные для конвертации
         invoice_unit = original.get("unit", "")
