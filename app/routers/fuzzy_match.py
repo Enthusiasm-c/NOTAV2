@@ -69,40 +69,53 @@ async def fuzzy_match_product(
     # Создаем словарь для поиска
     choices = {p.id: p.name for p in products}
     
-    # Выполняем нечеткий поиск
-    matches = process.extract(
-        name, 
-        choices=choices.values(),
-        scorer=fuzz.token_sort_ratio, 
-        limit=MAX_SIMILAR_PRODUCTS
-    )
-    
-    if not matches:
+    try:
+        # Выполняем нечеткий поиск
+        matches = process.extract(
+            name, 
+            choices=choices.values(),
+            scorer=fuzz.token_sort_ratio, 
+            limit=MAX_SIMILAR_PRODUCTS
+        )
+        
+        if not matches:
+            return None, 0.0
+            
+        # В зависимости от версии RapidFuzz, формат возвращаемых данных может отличаться
+        # Более новые версии возвращают (match, score, index), более старые - (match, score)
+        if len(matches[0]) == 3:  # формат (match, score, index)
+            best_match, best_score, _ = matches[0]
+        elif len(matches[0]) == 2:  # формат (match, score)
+            best_match, best_score = matches[0]
+        else:
+            logger.error("Unexpected format from rapidfuzz", match_format=matches[0])
+            return None, 0.0
+        
+        normalized_score = best_score / 100.0  # Нормализуем до диапазона 0-1
+        
+        if normalized_score < threshold:
+            logger.debug("No matching product above threshold", 
+                        name=name, best_match=best_match, score=normalized_score)
+            return None, normalized_score
+        
+        # Находим ID товара по его имени
+        product_id = None
+        for pid, pname in choices.items():
+            if pname == best_match:
+                product_id = pid
+                break
+        
+        logger.info("Fuzzy matching product found", 
+                   name=name, 
+                   match=best_match, 
+                   score=normalized_score,
+                   product_id=product_id)
+        
+        return product_id, normalized_score
+        
+    except Exception as e:
+        logger.error("Error during fuzzy matching", error=str(e))
         return None, 0.0
-    
-    # Лучшее совпадение
-    best_match, best_score = matches[0]
-    normalized_score = best_score / 100.0  # Нормализуем до диапазона 0-1
-    
-    if normalized_score < threshold:
-        logger.debug("No matching product above threshold", 
-                    name=name, best_match=best_match, score=normalized_score)
-        return None, normalized_score
-    
-    # Находим ID товара по его имени
-    product_id = None
-    for pid, pname in choices.items():
-        if pname == best_match:
-            product_id = pid
-            break
-    
-    logger.info("Fuzzy matching product found", 
-               name=name, 
-               match=best_match, 
-               score=normalized_score,
-               product_id=product_id)
-    
-    return product_id, normalized_score
 
 
 async def find_similar_products(
@@ -138,43 +151,56 @@ async def find_similar_products(
     product_dict = {p.id: p for p in products}
     choices = {p.id: p.name for p in products}
     
-    # Выполняем нечеткий поиск
-    matches = process.extract(
-        name, 
-        choices=choices.values(),
-        scorer=fuzz.token_sort_ratio, 
-        limit=limit
-    )
-    
-    # Фильтруем по порогу и создаем результат
-    result_products = []
-    
-    for match_name, score in matches:
-        normalized_score = score / 100.0
+    try:
+        # Выполняем нечеткий поиск
+        matches = process.extract(
+            name, 
+            choices=choices.values(),
+            scorer=fuzz.token_sort_ratio, 
+            limit=limit
+        )
         
-        if normalized_score < threshold:
-            continue
+        # Фильтруем по порогу и создаем результат
+        result_products = []
         
-        # Находим товар по имени
-        product_id = None
-        for pid, pname in choices.items():
-            if pname == match_name:
-                product_id = pid
-                break
+        for match_data in matches:
+            # Обрабатываем разные форматы результата
+            if len(match_data) == 3:  # формат (match, score, index)
+                match_name, score, _ = match_data
+            elif len(match_data) == 2:  # формат (match, score)
+                match_name, score = match_data
+            else:
+                logger.error("Unexpected format from rapidfuzz", match_format=match_data)
+                continue
+                
+            normalized_score = score / 100.0
+            
+            if normalized_score < threshold:
+                continue
+            
+            # Находим товар по имени
+            product_id = None
+            for pid, pname in choices.items():
+                if pname == match_name:
+                    product_id = pid
+                    break
+            
+            if product_id is None:
+                continue
+            
+            product = product_dict[product_id]
+            
+            result_products.append({
+                "id": product.id,
+                "name": product.name,
+                "unit": product.unit,
+                "confidence": normalized_score
+            })
         
-        if product_id is None:
-            continue
+        # Сортируем по убыванию уверенности
+        result_products.sort(key=lambda p: p["confidence"], reverse=True)
         
-        product = product_dict[product_id]
-        
-        result_products.append({
-            "id": product.id,
-            "name": product.name,
-            "unit": product.unit,
-            "confidence": normalized_score
-        })
-    
-    # Сортируем по убыванию уверенности
-    result_products.sort(key=lambda p: p["confidence"], reverse=True)
-    
-    return result_products
+        return result_products
+    except Exception as e:
+        logger.error("Error finding similar products", error=str(e))
+        return []
