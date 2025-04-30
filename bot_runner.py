@@ -1,4 +1,8 @@
 from __future__ import annotations
+from dotenv import load_dotenv
+load_dotenv()
+import os
+print({k: v for k, v in os.environ.items() if "TOKEN" in k or "KEY" in k or "URL" in k or "LOGIN" in k or "PASSWORD" in k or "STORE" in k})
 
 """
 bot_runner.py
@@ -22,7 +26,7 @@ import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from app.config import settings
+from app.config.settings import get_settings
 from app.routers.telegram_bot import router as main_router
 from app.routers.issue_editor import router as editor_router
 
@@ -33,7 +37,7 @@ from app.routers.issue_editor import router as editor_router
 # переменную среды LOG_LEVEL=DEBUG.
 #
 try:
-    log_level_name = settings.log_level if hasattr(settings, "log_level") else "INFO"
+    log_level_name = get_settings().log_level if hasattr(get_settings(), "log_level") else "INFO"
     log_level = logging.getLevelName(log_level_name.upper())
 except (AttributeError, ValueError):
     log_level = logging.INFO
@@ -46,16 +50,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # ────────────────────────────────────────────────────────────────
 
-
 async def main() -> None:
     """Запускает polling-loop aiogram."""
     # Выведем диагностику для отладки
     logger.info(f"Python версия: {sys.version}")
-    logger.info(f"Telegram token: {settings.telegram_bot_token[:5]}...")
+    logger.info(f"Telegram token: {get_settings().telegram_bot_token[:5]}...")
     logger.info(f"Log level: {log_level}")
     
     # Инициализация бота и диспетчера
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = Bot(token=get_settings().telegram_bot_token)
     storage = MemoryStorage()  # Хранилище для FSM
     dp = Dispatcher(storage=storage)
     
