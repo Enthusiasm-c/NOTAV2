@@ -51,11 +51,11 @@ async def main() -> None:
     """Запускает polling-loop aiogram."""
     # Выведем диагностику для отладки
     logger.info(f"Python версия: {sys.version}")
-    logger.info(f"Telegram token: {settings.telegram_token[:5]}...")
+    logger.info(f"Telegram token: {settings.telegram_bot_token[:5]}...")
     logger.info(f"Log level: {log_level}")
     
     # Инициализация бота и диспетчера
-    bot = Bot(token=settings.telegram_token)
+    bot = Bot(token=settings.telegram_bot_token)
     storage = MemoryStorage()  # Хранилище для FSM
     dp = Dispatcher(storage=storage)
     
