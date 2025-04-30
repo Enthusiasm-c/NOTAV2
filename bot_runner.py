@@ -1,8 +1,8 @@
 from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv()
-import os
-print({k: v for k, v in os.environ.items() if "TOKEN" in k or "KEY" in k or "URL" in k or "LOGIN" in k or "PASSWORD" in k or "STORE" in k})
+# import os
+# print({k: v for k, v in os.environ.items() if "TOKEN" in k or "KEY" in k or "URL" in k or "LOGIN" in k or "PASSWORD" in k or "STORE" in k})
 
 """
 bot_runner.py
