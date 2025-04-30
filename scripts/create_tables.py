@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import engine
 from app.models import Base
+from app.config.settings import get_settings
 
 # Добавляем текущую директорию в путь
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -43,7 +44,7 @@ async def create_tables_orm():
 def create_tables_sql():
     # Определяем путь к базе данных
     try:
-        from app.config import settings
+        settings = get_settings()
         db_url = settings.database_url
         
         # Парсим URL для SQLite

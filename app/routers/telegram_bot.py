@@ -141,7 +141,8 @@ from app.config.database import get_engine_and_session
 _, SessionLocal = get_engine_and_session()
 
 # Импортируем настройки
-from app.config import settings
+from app.config.settings import get_settings
+settings = get_settings()
 
 logger = structlog.get_logger()
 router = Router(name=__name__)

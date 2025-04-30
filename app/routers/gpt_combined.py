@@ -18,10 +18,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from aiogram import Bot
 
-from app.config import settings
+from app.config.settings import get_settings
 from app.utils.telegram_utils import download_file
 
 logger = structlog.get_logger()
+
+settings = get_settings()
 
 
 # --------------------------------------------------------------------------- #
