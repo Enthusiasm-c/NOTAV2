@@ -1,11 +1,10 @@
 """
-Основной модуль Telegram-бота Nota V2.
+Telegram bot router for Nota V2.
 
-Ответственность:
-- Обработка сообщений от пользователя (фото для OCR)
-- Запуск пайплайна OCR+Parsing
-- Отображение сводки результатов распознавания
-- Координация FSM для взаимодействия с пользователем
+This module handles all Telegram bot interactions including:
+- OCR processing of invoice images
+- Parsing and validation of invoice data
+- User interaction for invoice review and editing
 """
 
 from __future__ import annotations
@@ -22,24 +21,18 @@ try:
     # aiogram 3.x.x
     from aiogram.filters import Text
 except ImportError:
-    try:
-        # aiogram 3.x альтернативное расположение
-        from aiogram.filters.text import Text
-    except ImportError:
-        # Если не найдено - создаем свою реализацию
-        class Text:
-            """Совместимая реализация фильтра Text."""
-            def __init__(self, text=None):
-                self.text = text if isinstance(text, list) else [text] if text else None
-            
-            def __call__(self, message):
-                if hasattr(message, 'text'):
-                    # Для текстовых сообщений
-                    return self.text is None or message.text in self.text
-                elif hasattr(message, 'data'):
-                    # Для callback_query
-                    return self.text is None or message.data in self.text
-                return False
+    # Если не найдено - создаем свою реализацию
+    class Text:
+        """Совместимая реализация фильтра Text."""
+        def __init__(self, text=None):
+            self.text = text if isinstance(text, list) else [text] if text else None
+        
+        def __call__(self, message):
+            if hasattr(message, 'text'):
+                return self.text is None or message.text in self.text
+            elif hasattr(message, 'data'):
+                return self.text is None or message.data in self.text
+            return False
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import (
@@ -49,16 +42,15 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
-# Импортируем модули OCR и парсинга
-from app.routers.gpt_ocr import ocr
-from app.routers.gpt_parsing import parse
+# Импортируем модуль OCR и парсинга
+from app.routers.gpt_combined import ocr_and_parse
 
 # Импортируем unified_match для работы с сопоставлением товаров
 from app.routers.fuzzy_match import fuzzy_match_product, find_similar_products
 
 # Импортируем модуль unit_converter, если он доступен
 try:
-    from app.utils.unit_converter import normalize_unit, is_compatible_unit
+    from app.utils.unit_converter import normalize_unit, is_compatible_unit, convert
     UNIT_CONVERTER_AVAILABLE = True
 except ImportError:
     UNIT_CONVERTER_AVAILABLE = False
@@ -145,7 +137,7 @@ from app.routers.syrve_export import export_to_syrve
 from app.models.invoice_state import InvoiceStates, InvoiceEditStates
 
 # Импортируем сессию для работы с БД
-from app.db import SessionLocal
+from app.config.database import SessionLocal
 
 # Импортируем настройки
 from app.config import settings
@@ -169,14 +161,7 @@ async def _run_pipeline(file_id: str, bot: Bot) -> dict:
             return parsed_data
         except ImportError:
             # Если модуль недоступен, используем отдельные вызовы
-            raw_text = await ocr(file_id, bot)
-            logger.info("OCR completed successfully", text_length=len(raw_text))
-            
-            parsed = await parse(raw_text)
-            logger.info("Parsing completed successfully", 
-                       positions_count=len(parsed.get("positions", [])))
-            
-            return parsed
+            raise RuntimeError("gpt_combined.py должен быть в проекте!")
     except Exception as exc:
         logger.exception("Pipeline failed", exc_info=exc)
         raise

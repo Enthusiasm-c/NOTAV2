@@ -5,16 +5,26 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from decimal import Decimal
+from typing import List, Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
+from aiogram.types import InlineKeyboardMarkup
 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, CallbackQuery, User, Chat, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, User, Chat
 
-from app.routers.issue_editor import (
-    cb_start_fix, cb_select_issue, cb_action_with_item, cb_select_product,
-    make_issue_list_keyboard, make_item_edit_keyboard, format_issue_for_edit,
-    format_final_invoice, InvoiceEditStates
+from app.routers.issue_editor.formatters import (
+    get_issue_icon, format_issues_list, format_issue_edit, format_product_select
 )
+from app.routers.issue_editor.utils import (
+    clean_name_for_comparison, is_semifinished, get_products_by_name, save_product_match
+)
+from app.routers.issue_editor.handlers import (
+    cb_back, cb_change_page, cb_select_unit, cb_search_product, process_field_input, cb_select_issue, cb_action_with_item, cb_select_product
+)
+from app.routers.issue_editor.formatters import format_field_prompt
+from app.routers.issue_editor.formatters import format_summary_message
+from app.models.invoice_state import InvoiceEditStates
 
 
 # Фикстуры для тестирования
@@ -166,114 +176,54 @@ async def state(state_data):
     return state
 
 
-# Тесты для хелперов
-def test_make_issue_list_keyboard():
-    """Тест создания клавиатуры списка проблем."""
-    issues = [
-        {"invoice_item": "Item 1", "issue": "Not in database"},
-        {"invoice_item": "Item 2", "issue": "Unit mismatch"}
-    ]
-    
-    keyboard = make_issue_list_keyboard(issues)
-    
-    assert isinstance(keyboard, InlineKeyboardMarkup)
-    assert len(keyboard.inline_keyboard) == 4  # 2 проблемы + кнопка добавления + кнопки готово/отмена
-
-
-def test_make_item_edit_keyboard():
-    """Тест создания клавиатуры редактирования позиции."""
-    keyboard = make_item_edit_keyboard()
-    
-    assert isinstance(keyboard, InlineKeyboardMarkup)
-    assert len(keyboard.inline_keyboard) == 2  # 2 ряда кнопок
-    assert len(keyboard.inline_keyboard[0]) == 3  # 3 кнопки в первом ряду
-    assert len(keyboard.inline_keyboard[1]) == 2  # 2 кнопки во втором ряду
-
-
-@pytest.mark.asyncio
-async def test_format_issue_for_edit():
-    """Тест форматирования информации о проблемной позиции."""
-    issue = {
+@pytest.fixture
+def sample_issue() -> Dict[str, Any]:
+    """Создает тестовую проблему для накладной."""
+    return {
+        "index": 1,
+        "invoice_item": "Test Product (pcs)",
+        "db_item": "Test Product (pcs)",
         "issue": "Not in database",
         "original": {
-            "name": "Test Item",
-            "quantity": 5,
-            "unit": "kg",
-            "price": 10.0,
-            "sum": 50.0
-        },
-        "product": MagicMock(name="Database Item", unit="kg")
+            "name": "Test Product",
+            "quantity": 10.0,
+            "unit": "pcs",
+            "price": 100.0
+        }
     }
-    
-    result = await format_issue_for_edit(issue)
-    
-    assert isinstance(result, str)
-    assert "Test Item" in result
-    assert "5 kg" in result
-    assert "10.0" in result
-    assert "50.0" in result
-    assert "Not in database" in result
 
-
-@pytest.mark.asyncio
-async def test_format_final_invoice():
-    """Тест форматирования финального вида накладной."""
-    invoice_data = {
-        "supplier": "Test Supplier",
-        "date": "2025-04-20",
-        "positions": [
-            {
-                "name": "Item 1",
-                "quantity": 5,
-                "unit": "kg",
-                "price": 10.0,
-                "sum": 50.0
-            },
-            {
-                "name": "Item 2",
-                "quantity": 2,
+@pytest.fixture
+def sample_issues() -> List[Dict[str, Any]]:
+    """Создает список тестовых проблем."""
+    return [
+        {
+            "index": 1,
+            "invoice_item": "Product 1 (pcs)",
+            "db_item": "—",
+            "issue": "Not in database",
+            "original": {
+                "name": "Product 1",
+                "quantity": 10.0,
                 "unit": "pcs",
-                "price": 20.0,
-                "sum": 40.0
+                "price": 100.0
             }
-        ]
-    }
-    
-    original_issues = [
-        {"index": 2, "original": {"name": "Item 2"}},
+        },
+        {
+            "index": 2,
+            "invoice_item": "Product 2 (kg)",
+            "db_item": "Product 2 (g)",
+            "issue": "Unit conversion needed",
+            "original": {
+                "name": "Product 2",
+                "quantity": 1.0,
+                "unit": "kg",
+                "price": 50.0
+            }
+        }
     ]
-    
-    fixed_issues = {
-        1: {"action": "change_unit", "old_unit": "box", "new_unit": "pcs"}
-    }
-    
-    result = await format_final_invoice(invoice_data, original_issues, fixed_issues)
-    
-    assert isinstance(result, str)
-    assert "Test Supplier" in result
-    assert "2025-04-20" in result
-    assert "Item 1" in result
-    assert "Item 2" in result
-    assert "90.0" in result  # Total sum
-    assert "Исправлено позиций: 1" in result
 
 
 # Тесты для колбэков
-@pytest.mark.asyncio
-async def test_cb_start_fix(callback_query, state):
-    """Тест начала процесса исправления накладной."""
-    callback_query.data = "inv_edit"
-    
-    await cb_start_fix(callback_query, state)
-    
-    # Проверяем, что состояние изменилось
-    assert await state.get_state() == InvoiceEditStates.issue_list
-    
-    # Проверяем, что был вызов редактирования сообщения
-    callback_query.message.edit_text.assert_called_once()
-    callback_query.answer.assert_called_once()
-
-
 @pytest.mark.asyncio
 async def test_cb_select_issue(callback_query, state):
     """Тест выбора проблемной позиции из списка."""
@@ -379,3 +329,263 @@ async def test_process_field_input_quantity(message, state):
     assert 1 in updated_data["fixed_issues"]
     assert updated_data["fixed_issues"][1]["action"] == "change_quantity"
     assert updated_data["fixed_issues"][1]["new_quantity"] == 3.5
+
+
+def test_clean_name_for_comparison():
+    """Тестирует очистку названия для сравнения."""
+    test_cases = [
+        ("Test Product", "test product"),
+        ("Test-Product", "test product"),
+        ("Test_Product", "test product"),
+        ("Test.Product", "test product"),
+        ("Test  Product", "test product"),
+        ("Test Product!", "test product"),
+        ("Test Product?", "test product"),
+        ("Test Product...", "test product"),
+    ]
+    
+    for input_name, expected in test_cases:
+        assert clean_name_for_comparison(input_name) == expected
+
+
+def test_is_semifinished():
+    """Тестирует определение полуфабрикатов."""
+    semifinished_names = [
+        "Полуфабрикат",
+        "Полуфабрикат мясной",
+        "Полуфабрикат куриный",
+        "П/ф",
+        "П/ф мясной",
+        "П/ф куриный"
+    ]
+    
+    regular_names = [
+        "Курица",
+        "Мясо",
+        "Рыба",
+        "Овощи",
+        "Фрукты"
+    ]
+    
+    for name in semifinished_names:
+        assert is_semifinished(name) is True
+    
+    for name in regular_names:
+        assert is_semifinished(name) is False
+
+
+@pytest.mark.asyncio
+async def test_get_products_by_name(session: AsyncSession):
+    """Тестирует поиск товаров по названию."""
+    # Создаем тестовые товары
+    products = [
+        {"name": "Test Product 1", "unit": "pcs"},
+        {"name": "Test Product 2", "unit": "kg"},
+        {"name": "Another Product", "unit": "g"}
+    ]
+    
+    for product_data in products:
+        product = Product(**product_data)
+        session.add(product)
+    await session.commit()
+    
+    # Тестируем поиск
+    results = await get_products_by_name(session, "Test Product", limit=2)
+    assert len(results) == 2
+    assert all("Test Product" in p["name"] for p in results)
+    
+    # Тестируем поиск с порогом схожести
+    results = await get_products_by_name(session, "Test", threshold=0.9)
+    assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_save_product_match(session: AsyncSession):
+    """Тестирует сохранение сопоставления товара."""
+    # Создаем тестовый товар
+    product = Product(name="Test Product", unit="pcs")
+    session.add(product)
+    await session.commit()
+    
+    # Тестируем сохранение сопоставления
+    success = await save_product_match(session, "Test Product Alias", product.id)
+    assert success is True
+    
+    # Проверяем, что сопоставление создано
+    lookup = await session.execute(
+        select(ProductNameLookup).where(ProductNameLookup.alias == "Test Product Alias")
+    )
+    assert lookup.scalar_one_or_none() is not None
+
+
+def test_get_issue_icon(sample_issue: Dict[str, Any]):
+    """Тестирует получение иконки для проблемы."""
+    # Тестируем разные типы проблем
+    test_cases = [
+        ("Not in database", "🔴"),
+        ("Unit conversion needed", "🟠"),
+        ("Possible incorrect match", "🟡"),
+        ("Unknown issue", "⚠️")
+    ]
+    
+    for issue_type, expected_icon in test_cases:
+        sample_issue["issue"] = issue_type
+        assert get_issue_icon(sample_issue) == expected_icon
+
+
+@pytest.mark.asyncio
+async def test_format_issues_list(sample_issues: List[Dict[str, Any]]):
+    """Тестирует форматирование списка проблем."""
+    message, keyboard = await format_issues_list({"issues": sample_issues})
+    
+    assert isinstance(message, str)
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    assert "Product 1" in message
+    assert "Product 2" in message
+    assert len(keyboard.inline_keyboard) == len(sample_issues) + 1  # +1 для кнопки "Готово"
+
+
+@pytest.mark.asyncio
+async def test_format_issue_edit(sample_issue: Dict[str, Any]):
+    """Тестирует форматирование редактирования проблемы."""
+    message, keyboard = await format_issue_edit(sample_issue)
+    
+    assert isinstance(message, str)
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    assert "Test Product" in message
+    assert len(keyboard.inline_keyboard) > 0
+
+
+@pytest.mark.asyncio
+async def test_format_product_select(session: AsyncSession):
+    """Тестирует форматирование выбора товара."""
+    # Создаем тестовые товары
+    products = [
+        {"name": "Test Product 1", "unit": "pcs"},
+        {"name": "Test Product 2", "unit": "kg"}
+    ]
+    
+    for product_data in products:
+        product = Product(**product_data)
+        session.add(product)
+    await session.commit()
+    
+    message, keyboard = await format_product_select(
+        [{"id": p.id, "name": p.name, "unit": p.unit} for p in products],
+        "Test",
+        page=0
+    )
+    
+    assert isinstance(message, str)
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    assert "Test Product 1" in message
+    assert "Test Product 2" in message
+
+
+def test_format_field_prompt():
+    """Тестирует форматирование подсказки для поля."""
+    test_cases = [
+        ("name", "Test", "Введите новое название товара:\nТекущее значение: Test"),
+        ("quantity", "10", "Введите новое количество:\nТекущее значение: 10"),
+        ("unit", "pcs", "Введите новую единицу измерения:\nТекущее значение: pcs"),
+        ("price", "100", "Введите новую цену:\nТекущее значение: 100")
+    ]
+    
+    for field, current_value, expected in test_cases:
+        assert format_field_prompt(field, current_value) == expected
+
+
+@pytest.mark.asyncio
+async def test_cb_back(callback_query, state):
+    """Тест возврата к предыдущему состоянию."""
+    # Устанавливаем начальное состояние
+    await state.set_state(InvoiceEditStates.issue_edit)
+    await state.update_data(previous_state=InvoiceEditStates.issue_list)
+    
+    callback_query.data = "back"
+    
+    await cb_back(callback_query, state)
+    
+    # Проверяем, что вернулись к предыдущему состоянию
+    assert await state.get_state() == InvoiceEditStates.issue_list
+    callback_query.message.edit_text.assert_called_once()
+    callback_query.answer.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_cb_change_page(callback_query, state):
+    """Тест переключения страницы в списке проблем."""
+    callback_query.data = "page_1"  # Переход на вторую страницу
+    
+    await cb_change_page(callback_query, state)
+    
+    # Проверяем, что сообщение обновилось
+    callback_query.message.edit_text.assert_called_once()
+    callback_query.answer.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_cb_select_unit(callback_query, state):
+    """Тест выбора единицы измерения."""
+    callback_query.data = "unit_kg"
+    
+    await cb_select_unit(callback_query, state)
+    
+    # Проверяем, что состояние изменилось
+    assert await state.get_state() == InvoiceEditStates.issue_list
+    
+    # Проверяем, что данные обновились
+    updated_data = await state.get_data()
+    assert 1 in updated_data["fixed_issues"]
+    assert updated_data["fixed_issues"][1]["action"] == "change_unit"
+    assert updated_data["fixed_issues"][1]["new_unit"] == "kg"
+
+@pytest.mark.asyncio
+async def test_cb_search_product(callback_query, state):
+    """Тест поиска товара."""
+    callback_query.data = "search"
+    
+    await cb_search_product(callback_query, state)
+    
+    # Проверяем, что состояние изменилось
+    assert await state.get_state() == InvoiceEditStates.field_input
+    
+    # Проверяем, что было запрошено введение поискового запроса
+    callback_query.message.edit_text.assert_called_once()
+    assert "поисковый запрос" in callback_query.message.edit_text.call_args[0][0].lower()
+
+@pytest.mark.asyncio
+async def test_process_field_input_invalid_quantity(message, state):
+    """Тест обработки некорректного ввода количества."""
+    # Устанавливаем состояние и поле для редактирования
+    await state.update_data(field="quantity")
+    await state.set_state(InvoiceEditStates.field_input)
+    
+    # Устанавливаем некорректный текст сообщения
+    message.text = "invalid"
+    
+    await process_field_input(message, state)
+    
+    # Проверяем, что данные не обновились
+    updated_data = await state.get_data()
+    assert "fixed_issues" not in updated_data or 1 not in updated_data["fixed_issues"]
+    
+    # Проверяем, что было отправлено сообщение об ошибке
+    message.answer.assert_called_once()
+    assert "ошибка" in message.answer.call_args[0][0].lower()
+
+@pytest.mark.asyncio
+async def test_process_field_input_price(message, state):
+    """Тест ввода новой цены."""
+    # Устанавливаем состояние и поле для редактирования
+    await state.update_data(field="price")
+    await state.set_state(InvoiceEditStates.field_input)
+    
+    # Устанавливаем текст сообщения
+    message.text = "150.50"
+    
+    await process_field_input(message, state)
+    
+    # Проверяем, что данные обновились
+    updated_data = await state.get_data()
+    assert 1 in updated_data["fixed_issues"]
+    assert updated_data["fixed_issues"][1]["action"] == "change_price"
+    assert updated_data["fixed_issues"][1]["new_price"] == 150.50

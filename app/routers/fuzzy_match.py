@@ -13,7 +13,7 @@ from rapidfuzz import fuzz, process
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import SessionLocal
+from app.config.database import SessionLocal
 from app.models.product import Product
 from app.models.product_name_lookup import ProductNameLookup
 

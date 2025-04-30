@@ -1,32 +1,37 @@
 """
-Модель-«словарь» для сопоставления «как товар назван в накладной
-→ какой Product в базе».
+ProductNameLookup model for Nota V2.
 
-* product_id  – правильный товар
-* alias       – строка, которая распознана в накладной
+This module defines the ProductNameLookup model which maps alternative product names
+to actual products in the database.
 """
 
 from __future__ import annotations
+from typing import Optional
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Integer, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, IntPK
+from .base import IntPK
 from .product import Product
 
-
-class ProductNameLookup(Base, IntPK):
+class ProductNameLookup(IntPK):
+    """
+    ProductNameLookup model for mapping alternative product names.
+    
+    Attributes:
+        id (int): Primary key
+        alias (str): Alternative product name
+        product_id (int): Foreign key to product
+        product (Product): Related product
+        comment (Optional[str]): Additional notes
+    """
     __tablename__ = "product_name_lookup"
-
-    product_id: Mapped[int] = mapped_column(
-        ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-
-    # «как написано в накладной»
-    alias: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-
-    # связи
-    product: Mapped["Product"] = relationship(back_populates="name_lookups")
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"<ProductNameLookup {self.alias!r} → {self.product_id}>"
+    
+    alias: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False)
+    product: Mapped[Product] = relationship(Product)
+    comment: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    def __str__(self) -> str:
+        """Return string representation of the lookup entry."""
+        return f"{self.alias} -> {self.product.name}"

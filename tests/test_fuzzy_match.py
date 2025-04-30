@@ -1,7 +1,12 @@
+"""
+Тесты для модуля нечеткого поиска.
+"""
+
 import asyncio
 import pytest
-from app.routers.fuzzy_match import fuzzy_match_product
-from app.db import SessionLocal, Base, engine
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.routers.fuzzy_match import fuzzy_match_product, find_similar_products
+from app.config.database import SessionLocal, Base, engine
 from app.models.product import Product
 
 

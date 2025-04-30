@@ -1,15 +1,17 @@
 """
 Unit conversion module for invoice processing.
 
-Supported conversions:
-- Volume: ml ↔ l
-- Weight: g ↔ kg
-- Countable items: pcs, pack, box
+This module provides functionality for normalizing and converting units of measurement.
+It supports various unit types including volume, weight, and countable items.
+The module handles both English and Indonesian unit aliases.
 
-This module supports aliases in both English and Indonesian.
+Example:
+    >>> from app.utils.unit_converter import normalize_unit, convert
+    >>> normalize_unit("liter")  # Returns "l"
+    >>> convert(1000, "ml", "l")  # Returns 1.0
 """
 
-from typing import Tuple, Optional, Dict
+from typing import Dict, Tuple, Optional, Set
 
 # Unit normalization dictionary
 UNIT_ALIASES: Dict[str, str] = {
@@ -52,15 +54,26 @@ CONVERSION_FACTORS: Dict[Tuple[str, str], float] = {
     ("kg", "g"): 1000,
 }
 
+# Unit categories for compatibility checking
+VOLUME_UNITS: Set[str] = {"l", "ml"}
+WEIGHT_UNITS: Set[str] = {"kg", "g"}
+COUNTABLE_UNITS: Set[str] = {"pcs", "pack", "box"}
+
 def normalize_unit(unit_str: str) -> str:
     """
     Normalize unit string to standard format.
     
     Args:
-        unit_str (str): Input unit string
+        unit_str: Input unit string to normalize
         
     Returns:
-        str: Normalized unit string
+        Normalized unit string (e.g., "liter" -> "l")
+        
+    Example:
+        >>> normalize_unit("liter")
+        'l'
+        >>> normalize_unit("KILOGRAM")
+        'kg'
     """
     if not unit_str:
         return ""
@@ -73,12 +86,18 @@ def convert(value: float, from_unit: str, to_unit: str) -> Optional[float]:
     Convert value from one unit to another.
     
     Args:
-        value (float): Source value
-        from_unit (str): Source unit
-        to_unit (str): Target unit
+        value: Source value to convert
+        from_unit: Source unit
+        to_unit: Target unit
         
     Returns:
-        Optional[float]: Converted value or None if conversion is not possible
+        Converted value or None if conversion is not possible
+        
+    Example:
+        >>> convert(1000, "ml", "l")
+        1.0
+        >>> convert(1, "kg", "g")
+        1000.0
     """
     from_unit = normalize_unit(from_unit)
     to_unit = normalize_unit(to_unit)
@@ -100,11 +119,17 @@ def is_compatible_unit(unit1: str, unit2: str) -> bool:
     Check if two units are compatible (can be converted between each other).
     
     Args:
-        unit1 (str): First unit
-        unit2 (str): Second unit
+        unit1: First unit to check
+        unit2: Second unit to check
         
     Returns:
-        bool: True if units are compatible, False otherwise
+        True if units are compatible, False otherwise
+        
+    Example:
+        >>> is_compatible_unit("ml", "l")
+        True
+        >>> is_compatible_unit("kg", "pcs")
+        False
     """
     unit1 = normalize_unit(unit1)
     unit2 = normalize_unit(unit2)
@@ -118,17 +143,13 @@ def is_compatible_unit(unit1: str, unit2: str) -> bool:
         return True
     
     # Check unit categories
-    volume_units = {"l", "ml"}
-    weight_units = {"kg", "g"}
-    countable_units = {"pcs", "pack", "box"}
-    
-    if unit1 in volume_units and unit2 in volume_units:
+    if unit1 in VOLUME_UNITS and unit2 in VOLUME_UNITS:
         return True
-    if unit1 in weight_units and unit2 in weight_units:
+    if unit1 in WEIGHT_UNITS and unit2 in WEIGHT_UNITS:
         return True
-    if unit1 in countable_units and unit2 in countable_units:
+    if unit1 in COUNTABLE_UNITS and unit2 in COUNTABLE_UNITS:
         # Countable units technically aren't directly convertible without 
         # additional knowledge (e.g., how many pieces in a pack)
         return False
     
-    return False
+    return False 

@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Скрипт для прямого создания таблиц в базе данных без Alembic.
+Скрипт для создания таблиц в базе данных.
 """
 import os
 import sys
 import asyncio
 import sqlite3
+from pathlib import Path
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config.database import engine
+from app.models import Base
 
 # Добавляем текущую директорию в путь
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,9 +25,6 @@ print(f"PYTHONPATH: {sys.path}")
 # Функция для создания таблиц через ORM SQLAlchemy
 async def create_tables_orm():
     try:
-        from app.models import Base
-        from app.db import engine
-        
         print("Начинаем создание таблиц через SQLAlchemy ORM...")
         async with engine.begin() as conn:
             # Удаляем существующие таблицы (чтобы начать с чистого листа)

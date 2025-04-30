@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 
+import asyncio
 import sys
+from pathlib import Path
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config.database import engine
+from app.models import Base
+
 print(f"Python version: {sys.version}")
 print(f"Python path: {sys.path}")
 
@@ -13,9 +22,6 @@ try:
     
     from app.models import Base
     print("✅ Импорт Base успешен")
-    
-    from app.db import engine
-    print("✅ Импорт engine успешен")
 except ImportError as e:
     print(f"❌ Ошибка импорта: {e}")
     

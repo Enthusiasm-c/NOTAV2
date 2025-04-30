@@ -1,8 +1,8 @@
 """
-Форматирование сводки накладной в Markdown для Telegram.
+Markdown utilities for Nota V2.
 
-Модуль содержит функции для создания красивой и информативной
-сводки накладной, которая отображается в чате Telegram.
+This module provides functions for formatting text in Markdown format,
+including escaping special characters and truncating long text.
 """
 
 from __future__ import annotations
@@ -90,12 +90,29 @@ def truncate_text(text: str, max_length: int = MAX_ITEM_LENGTH) -> str:
         
     Returns:
         str: Обрезанный текст с многоточием или исходный текст
+        
+    Example:
+        >>> truncate_text("Very long text that needs to be truncated", 10)
+        'Very long...'
     """
     if len(text) > max_length:
         return text[:max_length-3] + "..."
     return text
 
-def escape_markdown(text: str | None) -> str:
+def escape_markdown(text: Optional[str]) -> str:
+    """
+    Экранирует специальные символы Markdown в тексте.
+    
+    Args:
+        text: Исходный текст или None
+        
+    Returns:
+        str: Текст с экранированными специальными символами
+        
+    Example:
+        >>> escape_markdown("Text with *markdown* symbols")
+        'Text with \\*markdown\\* symbols'
+    """
     if not text:                         # ловим None или ""
         return ""
     markdown_chars = r"\_*[]()~>`|#"+ "!"
@@ -180,15 +197,22 @@ def make_invoice_preview(
             issues_block += f"   {qty} {unit} × {price}\n"
             issues_block += f"   __{issue_info}__\n\n"
 
+    return header + "\n" + status_bar + "\n" + issues_block
+
 def make_issue_list(issues: List[Dict[str, Any]]) -> str:
     """
-    Создает список проблемных позиций для выбора.
+    Создает список проблем в формате Markdown.
     
     Args:
-        issues: Список проблемных позиций
+        issues: Список проблем
         
     Returns:
-        str: Отформатированный список проблем
+        str: Отформатированный текст списка проблем
+        
+    Example:
+        >>> issues = [{"type": "error", "message": "Invalid unit"}]
+        >>> make_issue_list(issues)
+        '❌ Invalid unit'
     """
     if not issues:
         return "✅ Все позиции проверены и готовы к отправке."
@@ -239,3 +263,61 @@ def make_final_preview(
         fixed_issues,
         show_all_issues=len(remaining_issues) > 0
     )
+
+def format_bold(text: str) -> str:
+    """Форматирует текст жирным шрифтом."""
+    return f"*{text}*"
+
+def format_italic(text: str) -> str:
+    """Форматирует текст курсивом."""
+    return f"_{text}_"
+
+def format_code(text: str) -> str:
+    """Форматирует текст как код."""
+    return f"`{text}`"
+
+def format_list(items: List[str]) -> str:
+    """Форматирует список элементов."""
+    return "\n".join(f"• {item}" for item in items)
+
+def format_table(headers: List[str], rows: List[List[str]]) -> str:
+    """Форматирует таблицу."""
+    if not headers or not rows:
+        return ""
+        
+    # Форматируем заголовки
+    header_row = " | ".join(headers)
+    separator = " | ".join(["---"] * len(headers))
+    
+    # Форматируем строки
+    formatted_rows = []
+    for row in rows:
+        if len(row) != len(headers):
+            continue
+        formatted_rows.append(" | ".join(str(cell) for cell in row))
+        
+    return f"{header_row}\n{separator}\n" + "\n".join(formatted_rows)
+
+def format_key_value(key: str, value: Any) -> str:
+    """Форматирует пару ключ-значение."""
+    return f"{format_bold(key)}: {value}"
+
+def format_section(title: str, content: str) -> str:
+    """Форматирует секцию с заголовком."""
+    return f"{format_bold(title)}\n{content}"
+
+def format_error(message: str) -> str:
+    """Форматирует сообщение об ошибке."""
+    return f"❌ {format_bold(message)}"
+
+def format_success(message: str) -> str:
+    """Форматирует сообщение об успехе."""
+    return f"✅ {format_bold(message)}"
+
+def format_warning(message: str) -> str:
+    """Форматирует предупреждение."""
+    return f"⚠️ {format_bold(message)}"
+
+def format_info(message: str) -> str:
+    """Форматирует информационное сообщение."""
+    return f"ℹ️ {format_bold(message)}"

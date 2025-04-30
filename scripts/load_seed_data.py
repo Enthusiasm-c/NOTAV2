@@ -10,12 +10,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List
 
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import SessionLocal, engine
+from app.config.database import SessionLocal, engine
 from app.models import Supplier, Product, ProductNameLookup, Base  # noqa: F401
 
 

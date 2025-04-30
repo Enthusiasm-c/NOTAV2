@@ -1,32 +1,37 @@
+"""
+Product model for Nota V2.
+
+This module defines the Product model which represents products in the database.
+"""
+
 from __future__ import annotations
+from typing import Optional
 
-from decimal import Decimal
+from sqlalchemy import Integer, String, Float
+from sqlalchemy.orm import Mapped, mapped_column
 
-from sqlalchemy import Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from .base import IntPK
 
-from .base import Base, IntPK
-
-
-class Product(Base, IntPK):
+class Product(IntPK):
+    """
+    Product model representing products in the database.
+    
+    Attributes:
+        id (int): Primary key
+        name (str): Product name
+        code (Optional[str]): Product code
+        unit (str): Unit of measurement
+        price (Optional[float]): Price per unit
+        comment (Optional[str]): Additional notes
+    """
     __tablename__ = "products"
-
-    # «человеческое» имя
-    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-
-    # единица учёта (kg, l, pcs …)
-    unit: Mapped[str] = mapped_column(String(16))
-
-    # базовая цена (может быть null)
-    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
-
-    # связанные таблицы
-    invoice_items: Mapped[list["InvoiceItem"]] = relationship(back_populates="product")
-    name_lookups: Mapped[list["ProductNameLookup"]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"<Product {self.id}: {self.name}>"
+    
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    unit: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    comment: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    def __str__(self) -> str:
+        """Return string representation of the product."""
+        return f"{self.name} ({self.unit})"
