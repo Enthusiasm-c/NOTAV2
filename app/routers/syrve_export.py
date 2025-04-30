@@ -1,8 +1,8 @@
 __all__ = ["export_to_syrve"]
 
 import httpx
-from ..config import settings
-from ..utils.xml_generator import generate_syrve_xml
+from app.config import settings
+from app.utils.xml_generator import generate_syrve_xml
 
 async def export_to_syrve(invoice_data: dict):
     """Генерирует XML, отправляет в Syrve, возвращает (bool, message)"""
