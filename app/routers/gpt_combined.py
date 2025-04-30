@@ -54,6 +54,11 @@ async def _call_combined_api(image_bytes: bytes) -> Tuple[str, Dict[str, Any]]:
         raise RuntimeError("OPENAI_API_KEY not set")
 
     b64img = base64.b64encode(image_bytes).decode()
+    # Сохраняем картинку для отладки
+    debug_path = "debug_ocr_image.jpg"
+    with open(debug_path, "wb") as f:
+        f.write(image_bytes)
+    logger.info(f"[DEBUG] Картинка для OCR сохранена: {debug_path}")
     payload = _build_payload(b64img)
 
     # Для логирования — копия payload без base64
