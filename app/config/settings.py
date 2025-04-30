@@ -51,16 +51,25 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Получить настройки приложения."""
-    import os
-    return Settings(
-        telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
-        openai_api_key=os.environ.get("OPENAI_API_KEY"),
-        syrve_server_url=os.environ.get("SYRVE_SERVER_URL", "https://eggstra-cafe.syrve.online:443"),
-        syrve_login=os.environ.get("SYRVE_LOGIN"),
-        syrve_password=os.environ.get("SYRVE_PASSWORD"),
-        default_store_id=os.environ.get("DEFAULT_STORE_ID"),
-        database_url=os.environ.get("DATABASE_URL")
-    )
+    try:
+        return Settings()
+    except Exception as e:
+        print(f"ERROR creating settings: {type(e).__name__}: {e}")
+        # Попробуем создать с игнорированием лишних полей
+        import os
+        # Явно устанавливаем только необходимые переменные
+        for k in list(os.environ.keys()):
+            if k not in [
+                'TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY', 'DATABASE_URL',
+                'SYRVE_SERVER_URL', 'SYRVE_LOGIN', 'SYRVE_PASSWORD', 'DEFAULT_STORE_ID'
+            ]:
+                os.environ.pop(k, None)
+        try:
+            # Пробуем создать настройки с очищенным окружением
+            return Settings()
+        except Exception as e2:
+            print(f"ERROR after cleanup: {type(e2).__name__}: {e2}")
+            raise
 
 settings = get_settings()
 
