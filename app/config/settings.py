@@ -3,28 +3,28 @@ from functools import lru_cache
 from typing import Optional
 
 from pydantic_settings import BaseSettings
-from decouple import config
+from pydantic import Field
 
 
 class Settings(BaseSettings):
     """Настройки приложения."""
     
     # База данных
-    database_url: str = config("DATABASE_URL", default="postgresql+asyncpg://nota:StrongPass123@127.0.0.1/nota_db")
+    database_url: str = Field(..., env="DATABASE_URL")
     
     # Telegram
-    telegram_bot_token: str = config("TELEGRAM_BOT_TOKEN", default="")
+    telegram_bot_token: str = Field(..., env="TELEGRAM_BOT_TOKEN")
     
     # OpenAI
-    openai_api_key: str = config("OPENAI_API_KEY", default="")
+    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
     
     # Настройки логирования
-    log_level: str = config("LOG_LEVEL", default="INFO")
-    log_format: str = config("LOG_FORMAT", default="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    log_level: str = Field("INFO", env="LOG_LEVEL")
+    log_format: str = Field("%(asctime)s - %(name)s - %(levelname)s - %(message)s", env="LOG_FORMAT")
     
     # Настройки приложения
-    debug: bool = config("DEBUG", default=False, cast=bool)
-    environment: str = config("ENVIRONMENT", default="development")
+    debug: bool = Field(False, env="DEBUG")
+    environment: str = Field("development", env="ENVIRONMENT")
     
     class Config:
         """Конфигурация Pydantic."""
