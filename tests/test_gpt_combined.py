@@ -220,27 +220,24 @@ async def test_call_combined_api(mock_client, mock_httpx_response, sample_image_
     mock_client.return_value.__aenter__.return_value.post.assert_called_once()
 
 
-@pytest.mark.asyncio
+@patch('app.routers.gpt_combined.download_file')
 @patch('app.routers.gpt_combined._call_combined_api')
-@patch('app.routers.gpt_combined._tg_download')
-async def test_process_invoice(mock_download, mock_call_api, mock_bot, 
+async def test_process_invoice(mock_call_api, mock_download, mock_bot, 
                               sample_image_bytes, sample_raw_text, sample_parsed_data):
     """Тест основной функции process_invoice."""
     # Настраиваем моки
     mock_download.return_value = sample_image_bytes
     mock_call_api.return_value = (sample_raw_text, sample_parsed_data)
-    
     # Патчим настройки
-    with patch('app.routers.gpt_combined.settings') as mock_settings:
+    with patch('app.routers.gpt_combined.get_settings') as mock_get_settings:
+        mock_settings = MagicMock()
         mock_settings.openai_api_key = "test_key"
-        
+        mock_get_settings.return_value = mock_settings
         # Вызываем тестируемую функцию
         raw_text, parsed_data = await process_invoice("test_file_id", mock_bot)
-    
     # Проверяем результаты
     assert raw_text == sample_raw_text
     assert parsed_data == sample_parsed_data
-    
     # Проверяем вызовы
     mock_download.assert_called_once_with(mock_bot, "test_file_id")
     mock_call_api.assert_called_once_with(sample_image_bytes)

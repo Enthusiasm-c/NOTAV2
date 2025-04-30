@@ -23,8 +23,6 @@ from app.utils.telegram_utils import download_file
 
 logger = structlog.get_logger()
 
-settings = get_settings()
-
 
 # --------------------------------------------------------------------------- #
 #  Базовые служебные функции
@@ -51,74 +49,33 @@ async def _call_combined_api(image_bytes: bytes) -> Tuple[str, Dict[str, Any]]:
     Returns:
         Tuple[str, Dict[str, Any]]: (распознанный текст, структурированные данные)
     """
+    settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 
     b64img = base64.b64encode(image_bytes).decode()
-    
-    # Создаем оптимизированный запрос, объединяющий OCR и парсинг
-    payload = {
-        "model": "gpt-4o",  # Используем полную gpt-4o для лучшего распознавания
-        "temperature": 0,
-        "max_tokens": 4096,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are an OCR system that can extract structured data from invoice images. "
-                    "You'll first extract the raw text from the image, then parse it into structured JSON. "
-                    "Follow these steps:\n"
-                    "1. Transcribe all text from the image accurately.\n"
-                    "2. Parse the transcribed text to extract invoice details.\n"
-                    "3. Return BOTH the raw text and structured data in this format:\n\n"
-                    "RAW TEXT:\n[transcribed text goes here]\n\n"
-                    "PARSED DATA:\n```json\n{\n"
-                    "  \"supplier\": \"[supplier name]\",\n"
-                    "  \"buyer\": \"[buyer name]\",\n"
-                    "  \"date\": \"[YYYY-MM-DD]\",\n"
-                    "  \"number\": \"[invoice number if available]\",\n"
-                    "  \"positions\": [\n"
-                    "    {\n"
-                    "      \"name\": \"[item name]\",\n"
-                    "      \"quantity\": [numeric value],\n"
-                    "      \"unit\": \"[unit of measure]\",\n"
-                    "      \"price\": [unit price],\n"
-                    "      \"sum\": [total price]\n"
-                    "    },\n"
-                    "    ...\n"
-                    "  ],\n"
-                    "  \"total_sum\": [total invoice amount]\n"
-                    "}\n```"
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64img}"},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Extract all text from this invoice image and parse the data into structured JSON."
-                        ),
-                    },
-                ],
-            }
-        ],
-    }
+    payload = _build_payload(b64img)
+
+    # Для логирования — копия payload без base64
+    safe_payload = _build_payload('[OMITTED]')
+    logger.info("OpenAI payload", payload=safe_payload)
 
     headers = {
         "Authorization": f"Bearer {settings.openai_api_key}",
         "Content-Type": "application/json",
     }
 
-    # Выполняем API-запрос с увеличенным таймаутом
-    async with httpx.AsyncClient(timeout=120) as client:  # Увеличенный таймаут
-        resp = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
-        resp.raise_for_status()  # Вызовет HTTPStatusError для 4xx/5xx ответов
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(settings.gpt_ocr_url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("OpenAI API HTTP error", status_code=e.response.status_code, payload=safe_payload, response_text=e.response.text[:500])
+        raise
+    except Exception as e:
+        logger.error("OpenAI API error", error=str(e), payload=safe_payload)
+        raise
 
     try:
         content = (
@@ -227,6 +184,63 @@ def _split_api_response(content: str) -> Tuple[str, Optional[str]]:
     return raw_text, json_str
 
 
+def _build_payload(image_b64: str) -> dict:
+    """
+    Формирует payload для OpenAI API (безопасно для логирования, если не включать base64).
+    """
+    return {
+        "model": "gpt-4o",
+        "temperature": 0,
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are an OCR system that can extract structured data from invoice images. "
+                    "You'll first extract the raw text from the image, then parse it into structured JSON. "
+                    "Follow these steps:\n"
+                    "1. Transcribe all text from the image accurately.\n"
+                    "2. Parse the transcribed text to extract invoice details.\n"
+                    "3. Return BOTH the raw text and structured data in this format:\n\n"
+                    "RAW TEXT:\n[transcribed text goes here]\n\n"
+                    "PARSED DATA:\n```json\n{\n"
+                    "  \"supplier\": \"[supplier name]\",\n"
+                    "  \"buyer\": \"[buyer name]\",\n"
+                    "  \"date\": \"[YYYY-MM-DD]\",\n"
+                    "  \"number\": \"[invoice number if available]\",\n"
+                    "  \"positions\": [\n"
+                    "    {\n"
+                    "      \"name\": \"[item name]\",\n"
+                    "      \"quantity\": [numeric value],\n"
+                    "      \"unit\": \"[unit of measure]\",\n"
+                    "      \"price\": [unit price],\n"
+                    "      \"sum\": [total price]\n"
+                    "    },\n"
+                    "    ...\n"
+                    "  ],\n"
+                    "  \"total_sum\": [total invoice amount]\n"
+                    "}\n```"
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,[OMITTED]"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract all text from this invoice image and parse the data into structured JSON."
+                        ),
+                    },
+                ],
+            }
+        ],
+    }
+
+
 # --------------------------------------------------------------------------- #
 #  MOCK-result для случаев ошибок
 # --------------------------------------------------------------------------- #
@@ -259,6 +273,7 @@ async def process_invoice(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
     Raises:
         Exception: При ошибке в процессе обработки
     """
+    settings = get_settings()
     if not settings.openai_api_key:
         logger.warning("OPENAI_API_KEY not set – using mock result")
         return "OCR MOCK (API KEY NOT SET)", dict(_MOCK_RESULT)
