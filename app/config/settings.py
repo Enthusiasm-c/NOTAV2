@@ -40,17 +40,29 @@ class Settings(BaseSettings):
     # База данных
     database_url: str = Field(..., env="DATABASE_URL")
 
-    class Config:
-        """Конфигурация Pydantic."""
-        env_file = ".env"
-        case_sensitive = True
-        extra = "ignore"
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": True,
+        "extra": "ignore",
+    }
 
 
 @lru_cache()
 def get_settings() -> Settings:
     """Получить настройки приложения."""
-    return Settings()
+    import os
+    return Settings(
+        telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY"),
+        syrve_server_url=os.environ.get("SYRVE_SERVER_URL", "https://eggstra-cafe.syrve.online:443"),
+        syrve_login=os.environ.get("SYRVE_LOGIN"),
+        syrve_password=os.environ.get("SYRVE_PASSWORD"),
+        default_store_id=os.environ.get("DEFAULT_STORE_ID"),
+        database_url=os.environ.get("DATABASE_URL")
+    )
+
+settings = get_settings()
 
 try:
     settings = get_settings()
