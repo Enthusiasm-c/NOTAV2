@@ -137,7 +137,8 @@ from app.routers.syrve_export import export_to_syrve
 from app.models.invoice_state import InvoiceStates, InvoiceEditStates
 
 # Импортируем сессию для работы с БД
-from app.config.database import SessionLocal
+from app.config.database import get_engine_and_session
+_, SessionLocal = get_engine_and_session()
 
 # Импортируем настройки
 from app.config import settings

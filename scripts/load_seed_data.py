@@ -18,8 +18,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.database import SessionLocal, engine
+from app.config.database import get_engine_and_session
 from app.models import Supplier, Product, ProductNameLookup, Base  # noqa: F401
+
+engine, SessionLocal = get_engine_and_session()
 
 
 def _parse_csv(path: Path) -> list[dict[str, Any]]:
