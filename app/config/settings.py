@@ -4,7 +4,8 @@ from typing import Optional
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
-
+import os
+print("Доступные переменные окружения:", {k: v for k, v in os.environ.items() if "TOKEN" in k or "API" in k or "DB" in k or "DATABASE" in k})
 
 class Settings(BaseSettings):
     """Настройки приложения."""
@@ -43,7 +44,7 @@ class Settings(BaseSettings):
         """Конфигурация Pydantic."""
         env_file = ".env"
         case_sensitive = True
-        extra = "forbid"
+        extra = "ignore"
 
 
 @lru_cache()
