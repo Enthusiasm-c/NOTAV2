@@ -1,3 +1,27 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+import os
+os.environ['TELEGRAM_BOT_TOKEN'] = '123456:FAKE-TOKEN'
+os.environ['OPENAI_API_KEY'] = 'sk-FAKEKEY1234567890'
+os.environ['LOG_LEVEL'] = 'INFO'
+os.environ['LOG_FORMAT'] = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+os.environ['DEBUG'] = 'False'
+os.environ['ENVIRONMENT'] = 'development'
+os.environ['GPT_OCR_URL'] = 'https://api.openai.com/v1/chat/completions'
+os.environ['GPT_PARSING_URL'] = 'https://api.openai.com/v1/chat/completions'
+os.environ['SYRVE_SERVER_URL'] = 'https://fake-syrve-server.local'
+os.environ['SYRVE_LOGIN'] = 'fake_login'
+os.environ['SYRVE_PASSWORD'] = 'fake_password'
+os.environ['DEFAULT_STORE_ID'] = '1'
+os.environ['PRODUCTS_CSV'] = 'data/base_products.csv'
+os.environ['SUPPLIERS_CSV'] = 'data/base_suppliers.csv'
+os.environ['LEARNED_PRODUCTS_CSV'] = 'data/learned_products.csv'
+os.environ['LEARNED_SUPPLIERS_CSV'] = 'data/learned_suppliers.csv'
+os.environ['FUZZY_THRESHOLD'] = '0.85'
+os.environ['DATABASE_URL'] = 'sqlite+aiosqlite:///:memory:'
+os.environ['ANTHROPIC_API_KEY'] = 'fake-anthropic'
+
 """Фикстуры для тестов."""
 
 import asyncio
@@ -9,7 +33,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.models.base import Base
-from app.config.database import SessionLocal
+# from app.config.database import SessionLocal
 from app.models.supplier import Supplier
 from app.models.invoice import Invoice
 

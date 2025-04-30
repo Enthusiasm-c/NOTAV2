@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 """Настройки приложения."""
 from functools import lru_cache
 from pydantic_settings import BaseSettings
@@ -34,4 +37,4 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
-settings = get_settings() 
+# settings = get_settings() 

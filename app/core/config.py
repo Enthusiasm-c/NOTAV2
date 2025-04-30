@@ -21,5 +21,6 @@ class Settings(BaseSettings):
         """Конфигурация настроек."""
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 settings = Settings() 
