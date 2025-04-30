@@ -52,5 +52,24 @@ def get_settings() -> Settings:
     """Получить настройки приложения."""
     return Settings()
 
-
-settings = get_settings() 
+try:
+    settings = get_settings()
+except Exception as e:
+    print(f"ERROR creating settings: {type(e).__name__}: {e}")
+    # Попробуем создать с игнорированием лишних полей
+    import os
+    os.environ.pop('DB_URL', None)  # Удаляем лишнюю переменную
+    # Явно устанавливаем только необходимые переменные
+    for k in list(os.environ.keys()):
+        if k not in [
+            'TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY', 'DATABASE_URL',
+            'SYRVE_SERVER_URL', 'SYRVE_LOGIN', 'SYRVE_PASSWORD', 'DEFAULT_STORE_ID'
+        ]:
+            os.environ.pop(k, None)
+    try:
+        # Пробуем создать настройки с очищенным окружением
+        settings = Settings()
+        print("Успешно создали настройки после очистки окружения!")
+    except Exception as e2:
+        print(f"ERROR after cleanup: {type(e2).__name__}: {e2}")
+        raise 
