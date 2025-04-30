@@ -15,6 +15,7 @@ import httpx
 import structlog
 from typing import Dict, Any, Tuple, Optional
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
+import re
 
 from aiogram import Bot
 
@@ -53,14 +54,14 @@ async def _call_combined_api(image_bytes: bytes) -> Tuple[str, Dict[str, Any]]:
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 
-    b64img = base64.b64encode(image_bytes).decode()
     # Сохраняем картинку для отладки
     debug_path = "debug_ocr_image.jpg"
     with open(debug_path, "wb") as f:
         f.write(image_bytes)
     logger.info(f"[DEBUG] Картинка для OCR сохранена: {debug_path}")
-    payload = _build_payload(b64img)
 
+    data_url = make_data_url(image_bytes, filename=debug_path)
+    payload = _build_payload(data_url)
     # Для логирования — копия payload без base64
     safe_payload = _build_payload('[OMITTED]')
     logger.info("OpenAI payload", payload=safe_payload)
@@ -189,7 +190,24 @@ def _split_api_response(content: str) -> Tuple[str, Optional[str]]:
     return raw_text, json_str
 
 
-def _build_payload(image_b64: str) -> dict:
+def make_data_url(image_bytes: bytes, filename: str = "image.jpg") -> str:
+    """
+    Генерирует корректный data-URL для OpenAI Vision API с проверкой base64.
+    """
+    import mimetypes
+    mime = mimetypes.guess_type(filename)[0] or "image/jpeg"
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    b64 = b64.replace("\n", "").replace("\r", "")
+    if not re.fullmatch(r"[A-Za-z0-9+/=]+", b64):
+        raise ValueError("Base64 содержит недопустимые символы")
+    try:
+        base64.b64decode(b64, validate=True)
+    except Exception as e:
+        raise ValueError(f"Base64 строка битая: {e}")
+    return f"data:{mime};base64,{b64}"
+
+
+def _build_payload(image_url: str) -> dict:
     """
     Формирует payload для OpenAI API (безопасно для логирования, если не включать base64).
     """
@@ -232,7 +250,7 @@ def _build_payload(image_b64: str) -> dict:
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,[OMITTED]"},
+                        "image_url": {"url": image_url},
                     },
                     {
                         "type": "text",
