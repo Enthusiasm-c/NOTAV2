@@ -30,6 +30,7 @@ class Settings(BaseSettings):
         """Конфигурация Pydantic."""
         env_file = ".env"
         case_sensitive = True
+        extra = "forbid"
 
 
 @lru_cache()
