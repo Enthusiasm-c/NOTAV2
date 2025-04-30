@@ -10,7 +10,6 @@ async def download_file(bot: Bot, file_id: str) -> bytes:
     """
     Скачивает файл из Telegram по file_id и возвращает его содержимое в виде байтов.
     """
-    logger.warning("download_file called (stub)", file_id=file_id)
     file = await bot.get_file(file_id)
     file_stream = await bot.download_file(file.file_path)
     # Асинхронный поток
