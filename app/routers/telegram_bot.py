@@ -10,58 +10,47 @@ This module handles all Telegram bot interactions including:
 from __future__ import annotations
 
 import structlog
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Tuple
 
 from aiogram import Bot, Router, F
-from aiogram.filters import CommandStart
-
-from aiogram.filters import CommandStart
-# Адаптивный импорт для разных версий aiogram
-try:
-    # aiogram 3.x.x
-    from aiogram.filters import Text
-except ImportError:
-    # Если не найдено - создаем свою реализацию
-    class Text:
-        """Совместимая реализация фильтра Text."""
-        def __init__(self, text=None):
-            self.text = text if isinstance(text, list) else [text] if text else None
-        
-        def __call__(self, message):
-            if hasattr(message, 'text'):
-                return self.text is None or message.text in self.text
-            elif hasattr(message, 'data'):
-                return self.text is None or message.data in self.text
-            return False
+from aiogram.filters import CommandStart, Text
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State
 from aiogram.types import (
-    Message, 
-    CallbackQuery, 
-    InlineKeyboardMarkup, 
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
     InlineKeyboardButton
 )
 
-# Импортируем модуль OCR и парсинга
-from app.routers.gpt_combined import ocr_and_parse
-
 # Импортируем unified_match для работы с сопоставлением товаров
 from app.routers.fuzzy_match import fuzzy_match_product, find_similar_products
+from app.routers.syrve_export import export_to_syrve
+
+# Импортируем функции для создания UI
+from app.utils.markdown import make_invoice_preview, make_issue_list
+
+# Импортируем состояния FSM
+from app.models.invoice_state import InvoiceStates, InvoiceEditStates
+
+# Импортируем настройки
+from app.config.settings import get_settings
+
+# Импортируем функции работы с данными
+from app.core.data_loader import get_supplier, get_product_details, load_data
 
 # Импортируем модуль unit_converter, если он доступен
 try:
-    from app.utils.unit_converter import normalize_unit, is_compatible_unit, convert
+    from app.utils.unit_converter import normalize_unit, is_compatible_unit
     UNIT_CONVERTER_AVAILABLE = True
 except ImportError:
     UNIT_CONVERTER_AVAILABLE = False
-    # Встроенные функции для работы с единицами измерения
-    # (копия из unit_converter для обеспечения прямой работоспособности)
     
     # Unit normalization dictionary
     UNIT_ALIASES: Dict[str, str] = {
         # English volume units
         "l": "l", "ltr": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l",
-        "ml": "ml", "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
+        "ml": "ml", "milliliter": "ml", "milliliters": "ml", "millilitre": "ml",
+        "millilitres": "ml",
         
         # English weight units
         "kg": "kg", "kilo": "kg", "kilogram": "kg", "kilograms": "kg",
@@ -87,23 +76,18 @@ except ImportError:
         
         # Common abbreviations
         "ea": "pcs",  # each
-        "btl": "pcs",  # bottle/botol
+        "btl": "pcs"  # bottle/botol
     }
     
     def normalize_unit(unit_str: str) -> str:
-        """
-        Normalize unit string to standard format.
-        """
+        """Normalize unit string to standard format."""
         if not unit_str:
             return ""
-        
         unit_str = unit_str.lower().strip()
         return UNIT_ALIASES.get(unit_str, unit_str)
     
     def is_compatible_unit(unit1: str, unit2: str) -> bool:
-        """
-        Check if two units are compatible (can be converted between each other).
-        """
+        """Check if two units are compatible (can be converted between each other)."""
         unit1 = normalize_unit(unit1)
         unit2 = normalize_unit(unit2)
         
@@ -124,29 +108,7 @@ except ImportError:
             # Countable units technically aren't directly convertible without 
             # additional knowledge (e.g., how many pieces in a pack)
             return False
-        
         return False
-
-# Импортируем функции для создания UI
-from app.utils.markdown import make_invoice_preview, make_issue_list
-
-# Импортируем экспорт в Syrve
-from app.routers.syrve_export import export_to_syrve
-
-# Импортируем состояния FSM
-from app.models.invoice_state import InvoiceStates, InvoiceEditStates
-
-# Импортируем настройки
-from app.config.settings import get_settings
-settings = get_settings()
-
-# Импортируем функции работы с данными
-from app.core.data_loader import (
-    get_supplier, 
-    get_product_alias, 
-    get_product_details,
-    load_data
-)
 
 logger = structlog.get_logger()
 router = Router(name=__name__)
@@ -154,9 +116,8 @@ router = Router(name=__name__)
 # Загружаем данные при старте модуля
 load_data()
 
-# --------------------------------------------------------------------------- #
-#                             Вспомогательные функции                         #
-# --------------------------------------------------------------------------- #
+settings = get_settings()
+
 
 def _safe_str(value: str | None) -> str:
     """Безопасно преобразует значение в строку и удаляет пробелы."""
@@ -170,8 +131,10 @@ async def _run_pipeline(file_id: str, bot: Bot) -> dict:
         try:
             from app.routers.gpt_combined import ocr_and_parse
             _, parsed_data = await ocr_and_parse(file_id, bot)
-            logger.info("Combined OCR+Parsing completed successfully",
-                       positions_count=len(parsed_data.get("positions", [])))
+            logger.info(
+                "Combined OCR+Parsing completed successfully",
+                positions_count=len(parsed_data.get("positions", []))
+            )
             return parsed_data
         except ImportError:
             # Если модуль недоступен, используем отдельные вызовы
@@ -188,13 +151,114 @@ def calculate_total_sum(positions: list) -> float:
         # Пропускаем удаленные позиции
         if pos.get("deleted", False):
             continue
-            
         try:
             pos_sum = float(pos.get("sum", 0)) if pos.get("sum") else 0
             total += pos_sum
         except (ValueError, TypeError):
-            logger.warning("Invalid sum value", position=pos.get("name"), sum=pos.get("sum"))
+            logger.warning(
+                "Invalid sum value",
+                position=pos.get("name"),
+                sum=pos.get("sum")
+            )
     return total
+
+
+async def _check_supplier(supplier_name: str) -> List[Dict[str, Any]]:
+    """Проверяет поставщика на наличие в базе."""
+    issues = []
+    if not supplier_name:
+        issues.append({
+            "type": "supplier_missing",
+            "message": "❌ Не указан поставщик"
+        })
+    else:
+        supplier = get_supplier(supplier_name)
+        if not supplier:
+            issues.append({
+                "type": "supplier_not_found",
+                "message": f"❓ Поставщик не найден: {supplier_name}"
+            })
+    return issues
+
+
+async def _check_product(name: str, i: int) -> Tuple[List[Dict[str, Any]], str | None]:
+    """Проверяет товар на наличие в базе и уверенность сопоставления."""
+    issues = []
+    product_id, confidence = await fuzzy_match_product(name)
+    if not product_id:
+        issues.append({
+            "type": "product_not_found",
+            "message": f"❓ Позиция {i}: товар не найден: {name}"
+        })
+    elif confidence < 0.9:  # Если уверенность низкая
+        similar = await find_similar_products(name, limit=3)
+        suggestions = ", ".join(_safe_str(p.get("name")) for p in similar)
+        msg = (
+            f"⚠️ Позиция {i}: низкая уверенность в сопоставлении товара: {name}\n"
+            f"Возможные варианты: {suggestions}"
+        )
+        issues.append({
+            "type": "product_low_confidence",
+            "message": msg
+        })
+    return issues, product_id
+
+
+def _check_quantity(qty: float, i: int) -> List[Dict[str, Any]]:
+    """Проверяет количество товара."""
+    issues = []
+    if not qty or qty <= 0:
+        issues.append({
+            "type": "position_no_quantity",
+            "message": f"❌ Позиция {i}: не указано количество"
+        })
+    return issues
+
+
+def _check_unit(unit: str, product_id: str | None, i: int) -> List[Dict[str, Any]]:
+    """Проверяет единицы измерения товара."""
+    issues = []
+    if not unit:
+        issues.append({
+            "type": "position_no_unit",
+            "message": f"❌ Позиция {i}: не указаны единицы измерения"
+        })
+    elif product_id:
+        product = get_product_details(product_id)
+        if product and UNIT_CONVERTER_AVAILABLE:
+            product_unit = _safe_str(product.get("measureName"))
+            if not is_compatible_unit(unit, product_unit):
+                msg = (
+                    f"⚠️ Позиция {i}: несовместимые единицы измерения: "
+                    f"{unit} vs {product_unit}"
+                )
+                issues.append({
+                    "type": "unit_mismatch",
+                    "message": msg
+                })
+    return issues
+
+
+def _check_total_sum(total: float, positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Проверяет общую сумму накладной."""
+    issues = []
+    if not total or total <= 0:
+        issues.append({
+            "type": "no_total",
+            "message": "❌ Не указана общая сумма"
+        })
+    else:
+        positions_sum = calculate_total_sum(positions)
+        if abs(total - positions_sum) > 0.01:  # Допускаем погрешность в 1 копейку
+            msg = (
+                f"⚠️ Сумма позиций ({positions_sum:.2f}) "
+                f"не совпадает с общей суммой ({total:.2f})"
+            )
+            issues.append({
+                "type": "sum_mismatch",
+                "message": msg
+            })
+    return issues
 
 
 async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
@@ -203,19 +267,7 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
     
     # Проверяем наличие поставщика
     supplier_name = _safe_str(data.get("supplier"))
-    if not supplier_name:
-        issues.append({
-            "type": "supplier_missing",
-            "message": "❌ Не указан поставщик"
-        })
-    else:
-        # Проверяем поставщика в базе
-        supplier = get_supplier(supplier_name)
-        if not supplier:
-            issues.append({
-                "type": "supplier_not_found",
-                "message": f"❓ Поставщик не найден: {supplier_name}"
-            })
+    issues.extend(await _check_supplier(supplier_name))
     
     # Проверяем позиции
     positions = data.get("positions", [])
@@ -233,65 +285,22 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
                     "message": f"❌ Позиция {i}: не указано название"
                 })
                 continue
-                
+            
             # Проверяем товар в базе
-            product_id, confidence = await fuzzy_match_product(name)
-            if not product_id:
-                issues.append({
-                    "type": "product_not_found",
-                    "message": f"❓ Позиция {i}: товар не найден: {name}"
-                })
-            elif confidence < 0.9:  # Если уверенность низкая
-                similar = await find_similar_products(name, limit=3)
-                suggestions = ", ".join(_safe_str(p.get("name")) for p in similar)
-                issues.append({
-                    "type": "product_low_confidence",
-                    "message": f"⚠️ Позиция {i}: низкая уверенность в сопоставлении товара: {name}\n"
-                              f"Возможные варианты: {suggestions}"
-                })
+            product_issues, product_id = await _check_product(name, i)
+            issues.extend(product_issues)
             
             # Проверяем количество
             qty = pos.get("quantity")
-            if not qty or qty <= 0:
-                issues.append({
-                    "type": "position_no_quantity",
-                    "message": f"❌ Позиция {i}: не указано количество"
-                })
+            issues.extend(_check_quantity(qty, i))
             
             # Проверяем единицы измерения
             unit = _safe_str(pos.get("unit"))
-            if not unit:
-                issues.append({
-                    "type": "position_no_unit",
-                    "message": f"❌ Позиция {i}: не указаны единицы измерения"
-                })
-            elif product_id:
-                product = await get_product_details(product_id)
-                if product and UNIT_CONVERTER_AVAILABLE:
-                    product_unit = _safe_str(product.get("measureName"))
-                    if not is_compatible_unit(unit, product_unit):
-                        issues.append({
-                            "type": "unit_mismatch",
-                            "message": f"⚠️ Позиция {i}: несовместимые единицы измерения: "
-                                     f"{unit} vs {product_unit}"
-                        })
+            issues.extend(_check_unit(unit, product_id, i))
     
     # Проверяем общую сумму
     total = data.get("total_sum")
-    if not total or total <= 0:
-        issues.append({
-            "type": "no_total",
-            "message": "❌ Не указана общая сумма"
-        })
-    else:
-        # Проверяем соответствие суммы позиций общей сумме
-        positions_sum = calculate_total_sum(positions)
-        if abs(total - positions_sum) > 0.01:  # Допускаем погрешность в 1 копейку
-            issues.append({
-                "type": "sum_mismatch",
-                "message": f"⚠️ Сумма позиций ({positions_sum:.2f}) "
-                         f"не совпадает с общей суммой ({total:.2f})"
-            })
+    issues.extend(_check_total_sum(total, positions))
     
     # Формируем общее сообщение
     if not issues:
@@ -301,10 +310,6 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
     
     return issues, message
 
-
-# --------------------------------------------------------------------------- #
-#                             Обработчики команд                              #
-# --------------------------------------------------------------------------- #
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
@@ -322,7 +327,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
     await state.set_state(InvoiceStates.ocr)
     
     # Отправляем уведомление о начале обработки
-    processing_msg = await m.answer("⏳ Обработка накладной...")
+    await m.answer("⏳ Обработка накладной...")
     
     # Получаем file_id фото с максимальным разрешением
     file_id = m.photo[-1].file_id
@@ -358,7 +363,10 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
             ])
         else:
             keyboard.append([
-                InlineKeyboardButton(text="✅ Подтвердить и отправить", callback_data="inv_ok")
+                InlineKeyboardButton(
+                    text="✅ Подтвердить и отправить",
+                    callback_data="inv_ok"
+                )
             ])
         
         kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -368,16 +376,14 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
         
     except Exception as exc:
         logger.exception("Ошибка обработки фото", exc_info=exc)
-        await m.answer("❌ Не удалось распознать документ. Пожалуйста, попробуйте снова.")
+        await m.answer(
+            "❌ Не удалось распознать документ. Пожалуйста, попробуйте снова."
+        )
     finally:
         # Возвращаемся к начальному состоянию, если была ошибка
         if await state.get_state() == InvoiceStates.ocr.state:
             await state.set_state(InvoiceStates.upload)
 
-
-# --------------------------------------------------------------------------- #
-#                       Обработчики основных callback'ов                      #
-# --------------------------------------------------------------------------- #
 
 @router.callback_query(Text("inv_ok"))
 async def cb_confirm_invoice(c: CallbackQuery, state: FSMContext):
@@ -401,7 +407,7 @@ async def cb_confirm_invoice(c: CallbackQuery, state: FSMContext):
     data["positions"] = active_positions
     
     # Экспортируем в Syrve
-    status_msg = await c.message.answer("⏳ Экспорт в Syrve...")
+    await c.message.answer("⏳ Экспорт в Syrve...")
     
     try:
         success, message = await export_to_syrve(data)
@@ -458,12 +464,7 @@ async def cb_confirm_invoice(c: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Text("inv_edit"))
 async def cb_edit_invoice(c: CallbackQuery, state: FSMContext):
-    """
-    Обработчик для перехода к редактированию накладной.
-    
-    Переводит FSM в состояние списка проблем InvoiceEditStates.issue_list
-    и передает управление модулю issue_editor.py
-    """
+    """Обработчик для перехода к редактированию накладной."""
     # Получаем данные из состояния
     data = (await state.get_data()).get("invoice", {})
     issues = (await state.get_data()).get("issues", [])
@@ -483,10 +484,9 @@ async def cb_edit_invoice(c: CallbackQuery, state: FSMContext):
     message = make_issue_list(issues)
     
     # Создаем клавиатуру для списка проблем
-    # Эта клавиатура будет обработана модулем issue_editor.py
     keyboard = []
     
-    for i, issue in enumerate(issues):
+    for i, issue in enumerate(issues, 1):
         index = issue.get("index", 0)
         original = issue.get("original", {})
         name = original.get("name", "")[:20]
