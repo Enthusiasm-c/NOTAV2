@@ -1,5 +1,5 @@
 """
-Модуль для нечеткого поиска товаров по названию в базе данных.
+Модуль для нечеткого поиска товаров по названию в CSV-файлах.
 
 Использует RapidFuzz для поиска товаров, наиболее похожих на введенное название.
 """
@@ -10,13 +10,8 @@ import structlog
 from typing import List, Tuple, Dict, Any, Optional
 
 from rapidfuzz import fuzz, process
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.database import get_engine_and_session
-# _, SessionLocal = get_engine_and_session()
-from app.models.product import Product
-from app.models.product_name_lookup import ProductNameLookup
+from app.core.data_loader import get_product_alias, PRODUCTS
 
 logger = structlog.get_logger()
 
@@ -28,15 +23,13 @@ MAX_SIMILAR_PRODUCTS = 3
 
 
 async def fuzzy_match_product(
-    session: AsyncSession, 
     name: str, 
     threshold: Optional[float] = None
 ) -> Tuple[Optional[int], float]:
     """
-    Находит наиболее подходящий товар в базе данных с помощью нечеткого поиска.
+    Находит наиболее подходящий товар с помощью нечеткого поиска.
     
     Args:
-        session: Асинхронная сессия SQLAlchemy
         name: Название товара для поиска
         threshold: Порог схожести, ниже которого товары игнорируются
     
@@ -49,28 +42,18 @@ async def fuzzy_match_product(
     if threshold is None:
         threshold = DEFAULT_THRESHOLD
     
-    # Сначала пытаемся найти в lookup таблице
-    stmt = select(ProductNameLookup).where(ProductNameLookup.alias == name)
-    result = await session.execute(stmt)
-    lookup = result.scalar_one_or_none()
+    # Сначала пытаемся найти точное совпадение
+    product = get_product_alias(name)
+    if product:
+        logger.info("Product found by exact match", 
+                   name=name, product_id=product["id"])
+        return product["id"], 1.0
     
-    if lookup:
-        logger.info("Product found in lookup table", 
-                   name=name, product_id=lookup.product_id)
-        return lookup.product_id, 1.0  # Точное совпадение
-    
-    # Загружаем все товары
-    stmt = select(Product)
-    result = await session.execute(stmt)
-    products = result.scalars().all()
-    
-    if not products:
-        return None, 0.0
-    
-    # Создаем словарь для поиска
-    choices = {p.id: p.name for p in products}
-    
+    # Если точного совпадения нет, используем нечеткий поиск
     try:
+        # Создаем словарь для поиска
+        choices = {str(p["id"]): p["name"] for p in PRODUCTS.to_dict("records")}
+        
         # Выполняем нечеткий поиск
         matches = process.extract(
             name, 
@@ -83,7 +66,6 @@ async def fuzzy_match_product(
             return None, 0.0
             
         # В зависимости от версии RapidFuzz, формат возвращаемых данных может отличаться
-        # Более новые версии возвращают (match, score, index), более старые - (match, score)
         if len(matches[0]) == 3:  # формат (match, score, index)
             best_match, best_score, _ = matches[0]
         elif len(matches[0]) == 2:  # формат (match, score)
@@ -103,7 +85,7 @@ async def fuzzy_match_product(
         product_id = None
         for pid, pname in choices.items():
             if pname == best_match:
-                product_id = pid
+                product_id = int(pid)
                 break
         
         logger.info("Fuzzy matching product found", 
@@ -120,16 +102,14 @@ async def fuzzy_match_product(
 
 
 async def find_similar_products(
-    session: AsyncSession, 
     name: str, 
     limit: int = MAX_SIMILAR_PRODUCTS,
     threshold: float = DEFAULT_THRESHOLD
 ) -> List[Dict[str, Any]]:
     """
-    Находит список похожих товаров в базе данных.
+    Находит список похожих товаров.
     
     Args:
-        session: Асинхронная сессия SQLAlchemy
         name: Название товара для поиска
         limit: Максимальное количество результатов
         threshold: Минимальный порог схожести
@@ -140,17 +120,10 @@ async def find_similar_products(
     if not name:
         return []
     
-    # Загружаем все товары
-    stmt = select(Product)
-    result = await session.execute(stmt)
-    products = result.scalars().all()
-    
-    if not products:
-        return []
-    
     # Создаем словарь для поиска
-    product_dict = {p.id: p for p in products}
-    choices = {p.id: p.name for p in products}
+    products_list = PRODUCTS.to_dict("records")
+    product_dict = {p["id"]: p for p in products_list}
+    choices = {p["id"]: p["name"] for p in products_list}
     
     try:
         # Выполняем нечеткий поиск
@@ -192,16 +165,14 @@ async def find_similar_products(
             product = product_dict[product_id]
             
             result_products.append({
-                "id": product.id,
-                "name": product.name,
-                "unit": product.unit,
+                "id": product["id"],
+                "name": product["name"],
+                "unit": product["measureName"],
                 "confidence": normalized_score
             })
         
-        # Сортируем по убыванию уверенности
-        result_products.sort(key=lambda p: p["confidence"], reverse=True)
-        
         return result_products
+        
     except Exception as e:
         logger.error("Error finding similar products", error=str(e))
         return []

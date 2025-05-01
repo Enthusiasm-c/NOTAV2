@@ -1,33 +1,27 @@
 # app/__init__.py
 """
-Инициализация пакета **app**
-────────────────────────────
-* Даёт «короткие» импорты:  `from app import Product`
-* Настраивает SQLAlchemy-модели, чтобы Base.metadata уже знал обо всех таблицах.
+Основной модуль приложения NOTA V2.
+
+Этот модуль:
+* Инициализирует логгер
+* Загружает конфигурацию
+* Загружает данные из CSV-файлов
 """
 
-from __future__ import annotations
-
-# --- Конфиг (settings) -------------------------------------------------------
-from .config import settings                       # noqa: F401
-
-# --- Модели / SQLAlchemy -----------------------------------------------------
-# Важно: сперва Base (там MetaData), потом модели, чтобы мапперы успели настроиться
-from .models.base import Base                      # noqa: F401
-from .models.product import Product                # noqa: F401
-from .models.supplier import Supplier              # noqa: F401
-from .models.invoice import Invoice                # noqa: F401
-from .models.invoice_item import InvoiceItem       # noqa: F401
-from .models.product_name_lookup import (          # noqa: F401
-    ProductNameLookup,
+# --- Логирование --------------------------------------------------------
+import structlog
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer()
+    ]
 )
 
-__all__: list[str] = [
-    "settings",
-    "Base",
-    "Product",
-    "Supplier",
-    "Invoice",
-    "InvoiceItem",
-    "ProductNameLookup",
-]
+# --- Конфигурация ------------------------------------------------------
+from app.config.settings import get_settings
+settings = get_settings()
+
+# --- Данные -----------------------------------------------------------
+from app.core.data_loader import load_data
+load_data()  # Загружаем данные при старте приложения

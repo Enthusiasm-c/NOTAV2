@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     learned_products_csv: str = Field("data/learned_products.csv", alias="LEARNED_PRODUCTS_CSV")
     learned_suppliers_csv: str = Field("data/learned_suppliers.csv", alias="LEARNED_SUPPLIERS_CSV")
     fuzzy_threshold: float = Field(0.85, alias="FUZZY_THRESHOLD")
-    database_url: str = Field(..., alias="DATABASE_URL")
 
     model_config = {
         "env_file": ".env",

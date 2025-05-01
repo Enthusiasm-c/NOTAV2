@@ -136,10 +136,6 @@ from app.routers.syrve_export import export_to_syrve
 # Импортируем состояния FSM
 from app.models.invoice_state import InvoiceStates, InvoiceEditStates
 
-# Импортируем сессию для работы с БД
-from app.config.database import get_engine_and_session
-_, SessionLocal = get_engine_and_session()
-
 # Импортируем настройки
 from app.config.settings import get_settings
 settings = get_settings()
@@ -185,127 +181,125 @@ def calculate_total_sum(positions: list) -> float:
     return total
 
 
-async def get_product_details(session, product_id):
-    """Получает детали продукта из базы данных"""
+async def get_product_details(product_id: int) -> Optional[Dict[str, Any]]:
+    """Получает детали продукта из CSV."""
     if not product_id:
         return None
     
-    from sqlalchemy import select
-    from app.models.product import Product
+    if PRODUCTS is None:
+        load_data()
     
-    res = await session.execute(select(Product).where(Product.id == product_id))
-    return res.scalar_one_or_none()
+    mask = PRODUCTS["id"] == product_id
+    matches = PRODUCTS[mask]
+    
+    if matches.empty:
+        return None
+        
+    return matches.iloc[0].to_dict()
 
 
 async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Анализирует проблемы в накладной, сопоставляя товары с базой данных.
-    
-    Args:
-        data: Данные накладной после OCR и парсинга
-        
-    Returns:
-        Tuple[List[Dict], str]: (список проблем, комментарий)
-    """
+    """Анализирует накладную на наличие проблем."""
     issues = []
-    unit_mismatches = 0
-    unknown_items = 0
-    wrong_matches = 0
     
-    # Получаем только активные позиции (не удаленные)
-    positions = [p for p in data.get("positions", []) if not p.get("deleted", False)]
+    # Проверяем наличие поставщика
+    supplier_name = data.get("supplier", "").strip()
+    if not supplier_name:
+        issues.append({
+            "type": "supplier_missing",
+            "message": "❌ Не указан поставщик"
+        })
+    else:
+        # Проверяем поставщика в базе
+        supplier = get_supplier(supplier_name)
+        if not supplier:
+            issues.append({
+                "type": "supplier_not_found",
+                "message": f"❓ Поставщик не найден: {supplier_name}"
+            })
     
-    # Словарь для хранения информации о продуктах
-    products_info = {}
-    
-    # Выполняем fuzzy-matching для каждой позиции и получаем информацию о продуктах
-    async with SessionLocal() as session:
-        for i, position in enumerate(positions):
-            if not position.get("name"):
+    # Проверяем позиции
+    positions = data.get("positions", [])
+    if not positions:
+        issues.append({
+            "type": "no_positions",
+            "message": "❌ Нет позиций в накладной"
+        })
+    else:
+        for i, pos in enumerate(positions, 1):
+            name = pos.get("name", "").strip()
+            if not name:
+                issues.append({
+                    "type": "position_no_name",
+                    "message": f"❌ Позиция {i}: не указано название"
+                })
                 continue
                 
-            # Нормализуем единицы измерения
-            if "unit" in position and position["unit"]:
-                position["unit"] = normalize_unit(position["unit"])
-                
-            # Выполняем fuzzy-matching
-            product_id, confidence = await fuzzy_match_product(
-                session, position["name"], settings.fuzzy_threshold
-            )
-            
-            position["match_id"] = product_id
-            position["confidence"] = confidence
-            
-            # Получаем информацию о продукте, если есть совпадение
-            if product_id:
-                product = await get_product_details(session, product_id)
-                if product:
-                    products_info[product_id] = product
-                    
-                    # Проверяем соответствие единиц измерения
-                    invoice_unit = normalize_unit(position.get("unit", ""))
-                    db_unit = normalize_unit(product.unit)
-                    
-                    if invoice_unit and db_unit and invoice_unit != db_unit:
-                        if is_compatible_unit(invoice_unit, db_unit):
-                            issues.append({
-                                "index": i+1,
-                                "invoice_item": f"{position.get('name', '')} ({invoice_unit})",
-                                "db_item": f"{product.name} ({db_unit})",
-                                "issue": "Unit conversion needed",
-                                "original": position,
-                                "product": product
-                            })
-                            unit_mismatches += 1
-                        else:
-                            issues.append({
-                                "index": i+1,
-                                "invoice_item": f"{position.get('name', '')} ({invoice_unit})",
-                                "db_item": f"{product.name} ({db_unit})",
-                                "issue": "Units incompatible",
-                                "original": position,
-                                "product": product
-                            })
-                            unit_mismatches += 1
-                    
-                    # Проверяем возможные ошибки сопоставления (низкая уверенность)
-                    if confidence < 0.90 and position.get("name", "").lower() != product.name.lower():
-                        issues.append({
-                            "index": i+1,
-                            "invoice_item": f"{position.get('name', '')}",
-                            "db_item": f"{product.name}",
-                            "issue": "Possible incorrect match",
-                            "original": position,
-                            "product": product
-                        })
-                        wrong_matches += 1
-            else:
-                # Нет совпадения в базе данных
+            # Проверяем товар в базе
+            product_id, confidence = await fuzzy_match_product(name)
+            if not product_id:
                 issues.append({
-                    "index": i+1,
-                    "invoice_item": f"{position.get('name', '')} ({position.get('unit', '')})",
-                    "db_item": "—",
-                    "issue": "Not in database",
-                    "original": position
+                    "type": "product_not_found",
+                    "message": f"❓ Позиция {i}: товар не найден: {name}"
                 })
-                unknown_items += 1
+            elif confidence < 0.9:  # Если уверенность низкая
+                similar = await find_similar_products(name, limit=3)
+                suggestions = ", ".join(p["name"] for p in similar)
+                issues.append({
+                    "type": "product_low_confidence",
+                    "message": f"⚠️ Позиция {i}: низкая уверенность в сопоставлении товара: {name}\n"
+                              f"Возможные варианты: {suggestions}"
+                })
+            
+            # Проверяем количество
+            qty = pos.get("quantity")
+            if not qty or qty <= 0:
+                issues.append({
+                    "type": "position_no_quantity",
+                    "message": f"❌ Позиция {i}: не указано количество"
+                })
+            
+            # Проверяем единицы измерения
+            unit = pos.get("unit", "").strip()
+            if not unit:
+                issues.append({
+                    "type": "position_no_unit",
+                    "message": f"❌ Позиция {i}: не указаны единицы измерения"
+                })
+            elif product_id:
+                product = await get_product_details(product_id)
+                if product and UNIT_CONVERTER_AVAILABLE:
+                    if not is_compatible_unit(unit, product["measureName"]):
+                        issues.append({
+                            "type": "unit_mismatch",
+                            "message": f"⚠️ Позиция {i}: несовместимые единицы измерения: "
+                                     f"{unit} vs {product['measureName']}"
+                        })
     
-    # Генерируем комментарий
-    comments = []
-    if unknown_items:
-        comments.append(f"{unknown_items} unknown items")
-    if unit_mismatches:
-        comments.append(f"{unit_mismatches} unit measurement discrepancies")
-    if wrong_matches:
-        comments.append(f"{wrong_matches} potential incorrect matches")
-    
-    if comments:
-        parser_comment = f"Found {', '.join(comments)}. See details below."
+    # Проверяем общую сумму
+    total = data.get("total_sum")
+    if not total or total <= 0:
+        issues.append({
+            "type": "no_total",
+            "message": "❌ Не указана общая сумма"
+        })
     else:
-        parser_comment = "All items processed successfully."
+        # Проверяем соответствие суммы позиций общей сумме
+        positions_sum = calculate_total_sum(positions)
+        if abs(total - positions_sum) > 0.01:  # Допускаем погрешность в 1 копейку
+            issues.append({
+                "type": "sum_mismatch",
+                "message": f"⚠️ Сумма позиций ({positions_sum:.2f}) "
+                         f"не совпадает с общей суммой ({total:.2f})"
+            })
     
-    # Возвращаем результаты анализа
-    return issues, parser_comment
+    # Формируем общее сообщение
+    if not issues:
+        message = "✅ Проблем не обнаружено"
+    else:
+        message = "❗️ Обнаружены проблемы:\n" + "\n".join(i["message"] for i in issues)
+    
+    return issues, message
 
 
 # --------------------------------------------------------------------------- #

@@ -1,112 +1,47 @@
-from dotenv import load_dotenv
-load_dotenv()
+"""
+Конфигурация тестов для NOTA V2.
+"""
 
 import os
-os.environ['TELEGRAM_BOT_TOKEN'] = '123456:FAKE-TOKEN'
-os.environ['OPENAI_API_KEY'] = 'sk-FAKEKEY1234567890'
-os.environ['LOG_LEVEL'] = 'INFO'
-os.environ['LOG_FORMAT'] = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-os.environ['DEBUG'] = 'False'
-os.environ['ENVIRONMENT'] = 'development'
-os.environ['GPT_OCR_URL'] = 'https://api.openai.com/v1/chat/completions'
-os.environ['GPT_PARSING_URL'] = 'https://api.openai.com/v1/chat/completions'
-os.environ['SYRVE_SERVER_URL'] = 'https://fake-syrve-server.local'
-os.environ['SYRVE_LOGIN'] = 'fake_login'
-os.environ['SYRVE_PASSWORD'] = 'fake_password'
-os.environ['DEFAULT_STORE_ID'] = '1'
-os.environ['PRODUCTS_CSV'] = 'data/base_products.csv'
-os.environ['SUPPLIERS_CSV'] = 'data/base_suppliers.csv'
-os.environ['LEARNED_PRODUCTS_CSV'] = 'data/learned_products.csv'
-os.environ['LEARNED_SUPPLIERS_CSV'] = 'data/learned_suppliers.csv'
-os.environ['FUZZY_THRESHOLD'] = '0.85'
-os.environ['DATABASE_URL'] = 'sqlite+aiosqlite:///:memory:'
-os.environ['ANTHROPIC_API_KEY'] = 'fake-anthropic'
-
-"""Фикстуры для тестов."""
-
-import asyncio
-from typing import AsyncGenerator, Generator
-
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+import pandas as pd
+from pathlib import Path
 
-from app.core.config import settings
-from app.models.base import Base
-# from app.config.database import SessionLocal
-from app.models.supplier import Supplier
-from app.models.invoice import Invoice
-
-# Используем in-memory SQLite для тестов
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-@pytest.fixture(scope="session")
-def event_loop() -> Generator:
-    """Создает новый event loop для тестов."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-@pytest.fixture(scope="session")
-async def test_engine():
-    """Создает тестовую базу данных."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=True)
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_environment():
+    """Настраивает тестовое окружение."""
+    # Создаем временную директорию для тестовых данных
+    test_data_dir = Path("tests/data")
+    test_data_dir.mkdir(exist_ok=True)
     
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Создаем тестовые CSV файлы
+    products_df = pd.DataFrame({
+        "id": [1, 2, 3],
+        "name": ["Raspberry", "Apple", "Orange"],
+        "code": ["R001", "A001", "O001"],
+        "measureName": ["kg", "kg", "kg"],
+        "is_ingredient": [True, True, True]
+    })
     
-    yield engine
+    suppliers_df = pd.DataFrame({
+        "id": [1, 2],
+        "name": ["Supplier A", "Supplier B"],
+        "code": ["SA001", "SB001"]
+    })
     
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    # Сохраняем тестовые данные
+    products_df.to_csv(test_data_dir / "test_products.csv", index=False)
+    suppliers_df.to_csv(test_data_dir / "test_suppliers.csv", index=False)
     
-    await engine.dispose()
-
-@pytest.fixture
-async def test_db(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Создает тестовую сессию базы данных."""
-    async_session = sessionmaker(
-        test_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    # Устанавливаем переменные окружения для тестов
+    os.environ["PRODUCTS_CSV"] = str(test_data_dir / "test_products.csv")
+    os.environ["SUPPLIERS_CSV"] = str(test_data_dir / "test_suppliers.csv")
     
-    async with async_session() as session:
-        yield session
-        await session.rollback()
-
-@pytest.fixture
-def override_get_db(test_db: AsyncSession):
-    """Переопределяет зависимость get_db для тестов."""
-    async def _override_get_db():
-        yield test_db
+    yield
     
-    return _override_get_db
-
-@pytest.fixture
-async def test_supplier(test_db: AsyncSession) -> Supplier:
-    """Создает тестового поставщика."""
-    supplier = Supplier(
-        name="Тестовый поставщик",
-        inn="1234567890",
-        kpp="123456789",
-        address="г. Москва, ул. Тестовая, д. 1",
-        phone="+7 (999) 123-45-67",
-        email="test@example.com",
-        comment="Тестовый комментарий"
-    )
-    test_db.add(supplier)
-    await test_db.commit()
-    await test_db.refresh(supplier)
-    return supplier
-
-@pytest.fixture
-async def test_invoice(test_db: AsyncSession, test_supplier: Supplier) -> Invoice:
-    """Создает тестовый счет."""
-    invoice = Invoice(
-        number="TEST-001",
-        supplier_id=test_supplier.id,
-        comment="Тестовый счет"
-    )
-    test_db.add(invoice)
-    await test_db.commit()
-    await test_db.refresh(invoice)
-    return invoice 
+    # Очищаем после тестов
+    try:
+        (test_data_dir / "test_products.csv").unlink()
+        (test_data_dir / "test_suppliers.csv").unlink()
+    except FileNotFoundError:
+        pass 
