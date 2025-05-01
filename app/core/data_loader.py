@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 import pandas as pd
 from rapidfuzz import fuzz
@@ -24,8 +24,13 @@ PRODUCTS_CSV = DATA_DIR / "base_products.csv"
 SUPPLIERS: Optional[pd.DataFrame] = None
 PRODUCTS: Optional[pd.DataFrame] = None
 
-def load_data() -> None:
-    """Загружает данные из CSV файлов в память."""
+def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Загружает данные из CSV файлов в память.
+    
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: (suppliers_df, products_df)
+    """
     global SUPPLIERS, PRODUCTS
     
     try:
@@ -56,6 +61,8 @@ def load_data() -> None:
             len(SUPPLIERS), len(PRODUCTS)
         )
         
+        return SUPPLIERS, PRODUCTS
+        
     except Exception as e:
         logger.error("Ошибка при загрузке данных: %s", str(e))
         raise
@@ -70,6 +77,7 @@ def get_supplier(name: str) -> Optional[Dict[str, Any]]:
     Returns:
         Dict[str, Any]: Данные поставщика или None
     """
+    global SUPPLIERS
     if SUPPLIERS is None:
         load_data()
         
@@ -101,6 +109,7 @@ def get_product_alias(alias: str) -> Optional[Dict[str, Any]]:
     Returns:
         Dict[str, Any]: Данные товара или None
     """
+    global PRODUCTS
     if PRODUCTS is None:
         load_data()
         
@@ -120,4 +129,29 @@ def get_product_alias(alias: str) -> Optional[Dict[str, Any]]:
     if ratios[best_match_idx] >= 80:  # Порог схожести
         return PRODUCTS.iloc[best_match_idx].to_dict()
         
-    return None 
+    return None
+
+def get_product_details(product_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает детали продукта по его ID.
+    
+    Args:
+        product_id: ID продукта
+        
+    Returns:
+        Dict[str, Any]: Данные продукта или None
+    """
+    global PRODUCTS
+    if PRODUCTS is None:
+        load_data()
+    
+    if not product_id:
+        return None
+    
+    mask = PRODUCTS["id"] == product_id
+    matches = PRODUCTS[mask]
+    
+    if matches.empty:
+        return None
+        
+    return matches.iloc[0].to_dict() 

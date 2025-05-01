@@ -141,10 +141,18 @@ from app.config.settings import get_settings
 settings = get_settings()
 
 # Импортируем функции работы с данными
-from app.core.data_loader import get_supplier, get_product_alias, load_data
+from app.core.data_loader import (
+    get_supplier, 
+    get_product_alias, 
+    get_product_details,
+    load_data
+)
 
 logger = structlog.get_logger()
 router = Router(name=__name__)
+
+# Загружаем данные при старте модуля
+load_data()
 
 # --------------------------------------------------------------------------- #
 #                             Вспомогательные функции                         #
@@ -187,23 +195,6 @@ def calculate_total_sum(positions: list) -> float:
         except (ValueError, TypeError):
             logger.warning("Invalid sum value", position=pos.get("name"), sum=pos.get("sum"))
     return total
-
-
-async def get_product_details(product_id: int) -> Optional[Dict[str, Any]]:
-    """Получает детали продукта из CSV."""
-    if not product_id:
-        return None
-    
-    if PRODUCTS is None:
-        load_data()
-    
-    mask = PRODUCTS["id"] == product_id
-    matches = PRODUCTS[mask]
-    
-    if matches.empty:
-        return None
-        
-    return matches.iloc[0].to_dict()
 
 
 async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
