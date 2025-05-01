@@ -2,8 +2,11 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 from decimal import Decimal
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.models.product_name_lookup import ProductNameLookup
+from app.models.product import Product
 
 @pytest.mark.asyncio
 async def test_product_name_lookup_creation(test_product_name_lookup):
@@ -206,8 +209,18 @@ async def test_product_name_lookup_special_characters(test_db, test_product):
     assert lookup.alias == "тестовый товар"  # Должны быть удалены лишние пробелы
 
 @pytest.mark.asyncio
-async def test_product_name_lookup_foreign_key_constraints(test_db):
+async def test_product_name_lookup_foreign_key_constraints(test_db: AsyncSession):
     """Тест ограничений внешних ключей."""
+    # Создаем тестовый товар
+    product = Product(
+        name="Тестовый товар",
+        code="TEST_FK_001",
+        unit="шт",
+        price=Decimal("100.50")
+    )
+    test_db.add(product)
+    await test_db.commit()
+    
     # Тест с несуществующим товаром
     with pytest.raises(IntegrityError):
         lookup = ProductNameLookup(
@@ -216,6 +229,25 @@ async def test_product_name_lookup_foreign_key_constraints(test_db):
         )
         test_db.add(lookup)
         await test_db.commit()
+    await test_db.rollback()
+    
+    # Тест с существующим товаром (должен пройти)
+    lookup = ProductNameLookup(
+        alias="тестовый товар",
+        product_id=product.id
+    )
+    test_db.add(lookup)
+    await test_db.commit()
+    
+    # Проверяем каскадное удаление
+    await test_db.delete(product)
+    await test_db.commit()
+    
+    # Проверяем, что lookup тоже удален
+    result = await test_db.execute(
+        select(ProductNameLookup).where(ProductNameLookup.product_id == product.id)
+    )
+    assert result.first() is None
 
 @pytest.mark.asyncio
 async def test_product_name_lookup_duplicate_aliases_different_products(

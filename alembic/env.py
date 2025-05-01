@@ -18,6 +18,9 @@ from app.config.settings import get_settings
 # this is the Alembic Config object
 config = context.config
 
+# Получаем настройки
+settings = get_settings()
+
 # Настраиваем URL соединения из settings
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
