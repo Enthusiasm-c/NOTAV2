@@ -15,13 +15,9 @@ async def download_file(bot: Bot, file_id: str) -> bytes:
         if not file:
             raise ValueError(f"Не удалось получить информацию о файле для ID: {file_id}")
             
-        file_stream = await bot.download_file(file.file_path)
-        if not file_stream:
-            raise ValueError("Получен пустой файл от Telegram API")
-            
-        image_bytes = await file_stream.read()
+        image_bytes = await bot.download_file(file.file_path)
         if not image_bytes:
-            raise ValueError("Не удалось прочитать содержимое файла")
+            raise ValueError("Получен пустой файл от Telegram API")
             
         logger.info(f"Успешно загружен файл размером {len(image_bytes)} байт")
         return image_bytes
