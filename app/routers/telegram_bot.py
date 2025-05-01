@@ -150,6 +150,11 @@ router = Router(name=__name__)
 #                             Вспомогательные функции                         #
 # --------------------------------------------------------------------------- #
 
+def _safe_str(value: str | None) -> str:
+    """Безопасно преобразует значение в строку и удаляет пробелы."""
+    return (value or "").strip()
+
+
 async def _run_pipeline(file_id: str, bot: Bot) -> dict:
     """Фото в Telegram → структурированный словарь (OCR+Parsing)."""
     try:
@@ -206,7 +211,7 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
     issues = []
     
     # Проверяем наличие поставщика
-    supplier_name = data.get("supplier", "").strip()
+    supplier_name = _safe_str(data.get("supplier"))
     if not supplier_name:
         issues.append({
             "type": "supplier_missing",
@@ -230,7 +235,7 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
         })
     else:
         for i, pos in enumerate(positions, 1):
-            name = pos.get("name", "").strip()
+            name = _safe_str(pos.get("name"))
             if not name:
                 issues.append({
                     "type": "position_no_name",
@@ -247,7 +252,7 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
                 })
             elif confidence < 0.9:  # Если уверенность низкая
                 similar = await find_similar_products(name, limit=3)
-                suggestions = ", ".join(p["name"] for p in similar)
+                suggestions = ", ".join(_safe_str(p.get("name")) for p in similar)
                 issues.append({
                     "type": "product_low_confidence",
                     "message": f"⚠️ Позиция {i}: низкая уверенность в сопоставлении товара: {name}\n"
@@ -263,7 +268,7 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
                 })
             
             # Проверяем единицы измерения
-            unit = pos.get("unit", "").strip()
+            unit = _safe_str(pos.get("unit"))
             if not unit:
                 issues.append({
                     "type": "position_no_unit",
@@ -272,11 +277,12 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
             elif product_id:
                 product = await get_product_details(product_id)
                 if product and UNIT_CONVERTER_AVAILABLE:
-                    if not is_compatible_unit(unit, product["measureName"]):
+                    product_unit = _safe_str(product.get("measureName"))
+                    if not is_compatible_unit(unit, product_unit):
                         issues.append({
                             "type": "unit_mismatch",
                             "message": f"⚠️ Позиция {i}: несовместимые единицы измерения: "
-                                     f"{unit} vs {product['measureName']}"
+                                     f"{unit} vs {product_unit}"
                         })
     
     # Проверяем общую сумму
