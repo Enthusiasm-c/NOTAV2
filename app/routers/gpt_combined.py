@@ -306,6 +306,13 @@ async def process_invoice(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
     try:
         # Скачиваем изображение с Telegram
         image_bytes = await download_file(bot, file_id)
+        logger.debug("Image size (bytes): %d", len(image_bytes))
+        logger.debug("image_bytes[:100]: %r", image_bytes[:100])
+        with open("debug_downloaded_image.jpg", "wb") as f:
+            f.write(image_bytes)
+        if not image_bytes.startswith(b'\xff\xd8'):
+            logger.error("Downloaded file is not a valid JPEG (missing header bytes)")
+            raise ValueError("Invalid JPEG file — missing header bytes")
         
         # Выполняем объединенный запрос
         raw_text, parsed_data = await _call_combined_api(image_bytes)

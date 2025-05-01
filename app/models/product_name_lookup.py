@@ -23,14 +23,12 @@ class ProductNameLookup(IntPK):
         alias (str): Alternative product name
         product_id (int): Foreign key to product
         product (Product): Related product
-        comment (Optional[str]): Additional notes
     """
     __tablename__ = "product_name_lookup"
     
     alias: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False)
     product: Mapped[Product] = relationship(Product)
-    comment: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
     def __str__(self) -> str:
         """Return string representation of the lookup entry."""
