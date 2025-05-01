@@ -3,6 +3,8 @@ pandas==2.2.0             # Работа с CSV
 numpy==1.26.4            # Требуется для pandas
 python-dotenv==1.0.1      # Загрузка переменных окружения
 structlog==24.1.0         # Структурированное логирование
+pydantic==2.5.3          # Валидация данных
+pydantic_settings==2.2.1  # Загрузка настроек
 
 # API клиенты
 aiogram==3.20.0            # Telegram-бот
