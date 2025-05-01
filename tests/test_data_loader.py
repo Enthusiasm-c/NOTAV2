@@ -2,121 +2,89 @@
 Тесты для модуля data_loader.
 """
 import pytest
-from pathlib import Path
-import pandas as pd
-from unittest.mock import patch, Mock
+import pathlib
+from typing import Dict, Any
 
 from app.core.data_loader import (
-    load_data,
-    get_supplier,
+    load_data_async,
     get_product_alias,
-    SUPPLIERS_CSV,
-    PRODUCTS_CSV
+    get_supplier,
+    save_invoice,
+    storage
 )
 
-@pytest.fixture
-def mock_csv_data():
-    """Фикстура с тестовыми данными CSV."""
-    suppliers_data = pd.DataFrame({
-        "name": ["ООО Тест", "ИП Иванов", "ООО Ромашка"],
-        "id": [1, 2, 3],
-        "code": ["SUP001", "SUP002", "SUP003"]
-    })
+@pytest.fixture(autouse=True)
+async def setup_test_data(tmp_path):
+    """Создает тестовые данные."""
+    # Используем временную директорию для тестов
+    storage.data_dir = tmp_path
+    storage.products_file = tmp_path / "products.csv"
+    storage.suppliers_file = tmp_path / "suppliers.csv"
+    storage.invoices_file = tmp_path / "invoices.csv"
     
-    products_data = pd.DataFrame({
-        "id": [1, 2, 3],
-        "name": ["Молоко", "Хлеб", "Сыр"],
-        "code": ["MILK001", "BREAD001", "CHEESE001"],
-        "measureName": ["л", "шт", "кг"],
-        "is_ingredient": [True, False, True]
-    })
+    # Создаем тестовые продукты
+    with open(storage.products_file, "w", newline="") as f:
+        f.write('id,name,aliases\n')
+        f.write('1,Молоко,"[""молоко 3.2%"", ""молоко пастеризованное""]"\n')
+        f.write('2,Хлеб,"[""хлеб белый"", ""батон""]"\n')
     
-    return suppliers_data, products_data
-
-@pytest.fixture
-def setup_mock_files(mock_csv_data, tmp_path):
-    """Создает временные CSV файлы с тестовыми данными."""
-    suppliers_data, products_data = mock_csv_data
+    # Создаем тестовых поставщиков
+    with open(storage.suppliers_file, "w", newline="") as f:
+        f.write('id,name,aliases\n')
+        f.write('1,ООО Молочный завод,"[""молзавод"", ""молокозавод""]"\n')
+        f.write('2,ИП Иванов,"[""иванов"", ""хлебозавод""]"\n')
     
-    # Создаем временные файлы
-    suppliers_csv = tmp_path / "base_suppliers.csv"
-    products_csv = tmp_path / "base_products.csv"
+    # Загружаем данные
+    await load_data_async()
     
-    suppliers_data.to_csv(suppliers_csv, index=False)
-    products_data.to_csv(products_csv, index=False)
+    yield
     
-    # Патчим пути к файлам
-    with patch("app.core.data_loader.SUPPLIERS_CSV", suppliers_csv), \
-         patch("app.core.data_loader.PRODUCTS_CSV", products_csv):
-        yield
+    # Очищаем данные после тестов
+    import shutil
+    shutil.rmtree(tmp_path)
 
-def test_csv_files_exist():
-    """Проверяет наличие CSV файлов."""
-    assert SUPPLIERS_CSV.exists(), f"Файл {SUPPLIERS_CSV} не найден"
-    assert PRODUCTS_CSV.exists(), f"Файл {PRODUCTS_CSV} не найден"
-
-def test_csv_files_have_required_columns():
-    """Проверяет наличие необходимых колонок в CSV файлах."""
-    suppliers_df = pd.read_csv(SUPPLIERS_CSV)
-    products_df = pd.read_csv(PRODUCTS_CSV)
+@pytest.mark.asyncio
+async def test_load_data():
+    """Проверяет загрузку данных."""
+    # Проверяем что данные загружены
+    product = get_product_alias("молоко 3.2%")
+    assert product == "Молоко"
     
-    required_supplier_cols = {"name", "id", "code"}
-    required_product_cols = {"id", "name", "code", "measureName", "is_ingredient"}
+    supplier = get_supplier("молзавод")
+    assert supplier == "ООО Молочный завод"
+
+@pytest.mark.asyncio
+async def test_product_alias_search():
+    """Проверяет поиск продуктов по алиасам."""
+    assert get_product_alias("молоко") == "Молоко"
+    assert get_product_alias("молоко 3.2%") == "Молоко"
+    assert get_product_alias("батон") == "Хлеб"
+    assert get_product_alias("несуществующий") is None
+
+@pytest.mark.asyncio
+async def test_supplier_search():
+    """Проверяет поиск поставщиков по алиасам."""
+    assert get_supplier("молзавод") == "ООО Молочный завод"
+    assert get_supplier("иванов") == "ИП Иванов"
+    assert get_supplier("несуществующий") is None
+
+@pytest.mark.asyncio
+async def test_save_invoice():
+    """Проверяет сохранение накладной."""
+    test_invoice = {
+        "id": "INV-001",
+        "supplier": "ООО Молочный завод",
+        "date": "2024-03-20",
+        "number": "123",
+        "total_sum": 1000,
+        "items": [
+            {"name": "Молоко", "quantity": 10, "price": 100}
+        ]
+    }
     
-    assert all(col in suppliers_df.columns for col in required_supplier_cols), \
-        "Отсутствуют обязательные колонки в suppliers.csv"
-    assert all(col in products_df.columns for col in required_product_cols), \
-        "Отсутствуют обязательные колонки в products.csv"
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_load_data(mock_csv_data):
-    """Тест загрузки данных из CSV."""
-    load_data()
-    from app.core.data_loader import SUPPLIERS, PRODUCTS
+    await save_invoice(test_invoice)
     
-    assert SUPPLIERS is not None
-    assert PRODUCTS is not None
-    assert len(SUPPLIERS) == len(mock_csv_data[0])
-    assert len(PRODUCTS) == len(mock_csv_data[1])
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_get_supplier_exact_match():
-    """Тест поиска поставщика по точному совпадению."""
-    supplier = get_supplier("ООО Тест")
-    assert supplier is not None
-    assert supplier["name"] == "ООО Тест"
-    assert supplier["code"] == "SUP001"
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_get_supplier_fuzzy_match():
-    """Тест поиска поставщика по частичному совпадению."""
-    supplier = get_supplier("ООО Тест Компани")
-    assert supplier is not None
-    assert supplier["name"] == "ООО Тест"
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_get_supplier_no_match():
-    """Тест отсутствия совпадений при поиске поставщика."""
-    supplier = get_supplier("Несуществующий поставщик")
-    assert supplier is None
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_get_product_alias_exact_match():
-    """Тест поиска товара по точному совпадению."""
-    product = get_product_alias("Молоко")
-    assert product is not None
-    assert product["name"] == "Молоко"
-    assert product["code"] == "MILK001"
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_get_product_alias_fuzzy_match():
-    """Тест поиска товара по частичному совпадению."""
-    product = get_product_alias("Молоко 3.2%")
-    assert product is not None
-    assert product["name"] == "Молоко"
-
-@pytest.mark.usefixtures("setup_mock_files")
-def test_get_product_alias_no_match():
-    """Тест отсутствия совпадений при поиске товара."""
-    product = get_product_alias("Несуществующий товар")
-    assert product is None 
+    # Проверяем что файл содержит данные
+    content = storage.invoices_file.read_text()
+    assert "INV-001" in content
+    assert "ООО Молочный завод" in content 

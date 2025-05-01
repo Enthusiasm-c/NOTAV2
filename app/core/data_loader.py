@@ -6,14 +6,19 @@
 """
 from __future__ import annotations
 
-import logging
+import structlog
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
+from functools import lru_cache
+import json
 
 import pandas as pd
 from rapidfuzz import fuzz
 
-logger = logging.getLogger(__name__)
+from app.config.storage import get_data_dir
+from app.core.csv_storage import CSVStorage
+
+logger = structlog.get_logger()
 
 # Пути к CSV файлам
 DATA_DIR = Path("data")
@@ -23,6 +28,13 @@ PRODUCTS_CSV = DATA_DIR / "base_products.csv"
 # Глобальные DataFrame для кеширования данных
 SUPPLIERS: Optional[pd.DataFrame] = None
 PRODUCTS: Optional[pd.DataFrame] = None
+
+# Глобальные переменные для кэширования данных
+PRODUCTS_LIST: List[Dict[str, Any]] = []
+SUPPLIERS_LIST: List[Dict[str, Any]] = []
+
+# Инициализация хранилища
+storage = CSVStorage(get_data_dir())
 
 def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -154,4 +166,101 @@ def get_product_details(product_id: int) -> Optional[Dict[str, Any]]:
     if matches.empty:
         return None
         
-    return matches.iloc[0].to_dict() 
+    return matches.iloc[0].to_dict()
+
+async def load_data_async() -> None:
+    """Загружает данные из CSV файлов."""
+    global PRODUCTS_LIST, SUPPLIERS_LIST
+    
+    logger.info("Загрузка данных из CSV файлов...")
+    
+    try:
+        PRODUCTS_LIST = await storage.load_products()
+        SUPPLIERS_LIST = await storage.load_suppliers()
+        
+        logger.info(
+            "Данные загружены",
+            suppliers_count=len(SUPPLIERS_LIST),
+            products_count=len(PRODUCTS_LIST)
+        )
+    except Exception as e:
+        logger.error("Ошибка загрузки данных", error=str(e))
+        raise
+
+@lru_cache(maxsize=1000)
+def get_product_alias_async(name: str) -> Optional[str]:
+    """
+    Возвращает стандартизированное название продукта.
+    
+    Args:
+        name: Название продукта для поиска
+        
+    Returns:
+        Optional[str]: Стандартизированное название или None если не найдено
+    """
+    name = name.lower().strip()
+    logger.debug("searching_product", name=name, products_count=len(PRODUCTS_LIST))
+    
+    for product in PRODUCTS_LIST:
+        logger.debug("checking_product", 
+                    product_name=product["name"],
+                    product_aliases=product["aliases"])
+        
+        if name == product["name"].lower():
+            logger.debug("found_exact_match", name=name)
+            return product["name"]
+            
+        if name in [a.lower() for a in product["aliases"]]:
+            logger.debug("found_alias_match", 
+                        name=name, 
+                        product_name=product["name"])
+            return product["name"]
+            
+    logger.debug("product_not_found", name=name)
+    return None
+
+@lru_cache(maxsize=1000)
+def get_supplier_async(name: str) -> Optional[str]:
+    """
+    Возвращает стандартизированное название поставщика.
+    
+    Args:
+        name: Название поставщика для поиска
+        
+    Returns:
+        Optional[str]: Стандартизированное название или None если не найдено
+    """
+    name = name.lower().strip()
+    logger.debug("searching_supplier", name=name, suppliers_count=len(SUPPLIERS_LIST))
+    
+    for supplier in SUPPLIERS_LIST:
+        logger.debug("checking_supplier", 
+                    supplier_name=supplier["name"],
+                    supplier_aliases=supplier["aliases"])
+        
+        if name == supplier["name"].lower():
+            logger.debug("found_exact_match", name=name)
+            return supplier["name"]
+            
+        if name in [a.lower() for a in supplier["aliases"]]:
+            logger.debug("found_alias_match", 
+                        name=name, 
+                        supplier_name=supplier["name"])
+            return supplier["name"]
+            
+    logger.debug("supplier_not_found", name=name)
+    return None
+
+async def save_invoice(invoice_data: Dict[str, Any]) -> None:
+    """
+    Сохраняет данные накладной.
+    
+    Args:
+        invoice_data: Данные накладной для сохранения
+    """
+    try:
+        await storage.save_invoice(invoice_data)
+        logger.info("Накладная сохранена", invoice_id=invoice_data.get("id"))
+    except Exception as e:
+        logger.error("Ошибка сохранения накладной", error=str(e))
+        raise 

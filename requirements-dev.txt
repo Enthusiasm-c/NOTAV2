@@ -1,0 +1,17 @@
+# Линтеры и статический анализ
+flake8>=7.0.0
+flake8-async>=22.11.0
+mypy>=1.10.0
+types-all>=1.0.0
+
+# Тестирование
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# Форматирование
+black>=24.1.0
+isort>=5.13.0
+
+# Pre-commit хуки
+pre-commit>=3.6.0 
