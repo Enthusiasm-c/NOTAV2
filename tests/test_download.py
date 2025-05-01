@@ -3,6 +3,7 @@
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from io import BytesIO
 from aiogram import Bot
 from app.utils.telegram_utils import download_file
 
@@ -20,7 +21,8 @@ async def test_download_file_success(mock_bot):
     """Тест успешной загрузки файла."""
     # Подготавливаем тестовые данные
     test_bytes = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00'  # Валидный JPEG заголовок
-    mock_bot.download_file.return_value = test_bytes
+    test_buffer = BytesIO(test_bytes)
+    mock_bot.download_file.return_value = test_buffer
     
     # Вызываем функцию
     result = await download_file(mock_bot, "test_file_id")
@@ -34,7 +36,7 @@ async def test_download_file_success(mock_bot):
 @pytest.mark.asyncio
 async def test_download_file_empty_response(mock_bot):
     """Тест обработки пустого ответа."""
-    mock_bot.download_file.return_value = b''
+    mock_bot.download_file.return_value = BytesIO(b'')
     
     with pytest.raises(ValueError, match="Получен пустой файл от Telegram API"):
         await download_file(mock_bot, "test_file_id")
