@@ -140,6 +140,9 @@ from app.models.invoice_state import InvoiceStates, InvoiceEditStates
 from app.config.settings import get_settings
 settings = get_settings()
 
+# Импортируем функции работы с данными
+from app.core.data_loader import get_supplier, get_product_alias, load_data
+
 logger = structlog.get_logger()
 router = Router(name=__name__)
 
