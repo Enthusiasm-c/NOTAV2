@@ -13,7 +13,7 @@ import structlog
 from typing import Dict, List, Any, Tuple
 
 from aiogram import Bot, Router, F
-from aiogram.filters import CommandStart, Text
+from aiogram.filters.command import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message,
@@ -385,7 +385,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
             await state.set_state(InvoiceStates.upload)
 
 
-@router.callback_query(Text("inv_ok"))
+@router.callback_query(F.data == "inv_ok")
 async def cb_confirm_invoice(c: CallbackQuery, state: FSMContext):
     """Обработчик подтверждения накладной"""
     # Получаем данные из состояния
@@ -462,7 +462,7 @@ async def cb_confirm_invoice(c: CallbackQuery, state: FSMContext):
     await c.answer()
 
 
-@router.callback_query(Text("inv_edit"))
+@router.callback_query(F.data == "inv_edit")
 async def cb_edit_invoice(c: CallbackQuery, state: FSMContext):
     """Обработчик для перехода к редактированию накладной."""
     # Получаем данные из состояния
