@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import structlog
 from typing import Dict, List, Any, Tuple
+import math
 
 from aiogram import Bot, Router, F
 from aiogram.filters.command import CommandStart
@@ -119,9 +120,25 @@ load_data()
 settings = get_settings()
 
 
-def _safe_str(value: str | None) -> str:
-    """Безопасно преобразует значение в строку и удаляет пробелы."""
-    return (value or "").strip()
+def _safe_str(value: Any) -> str:
+    """Безопасно преобразует значение в строку и удаляет пробелы.
+    
+    Args:
+        value: Значение любого типа для преобразования в строку
+        
+    Returns:
+        str: Очищенная строка или пустая строка для None/NaN
+    """
+    # Проверяем на None и NaN
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+        
+    # Преобразуем в строку и очищаем
+    try:
+        return str(value).strip()
+    except Exception as e:
+        logger.warning("Error in _safe_str", value=value, error=str(e))
+        return ""
 
 
 async def _run_pipeline(file_id: str, bot: Bot) -> dict:
@@ -227,7 +244,17 @@ def _check_unit(unit: str, product_id: str | None, i: int) -> List[Dict[str, Any
         product = get_product_details(product_id)
         if product and UNIT_CONVERTER_AVAILABLE:
             product_unit = _safe_str(product.get("measureName"))
-            if not is_compatible_unit(unit, product_unit):
+            # Если у товара не указана единица измерения, добавляем предупреждение
+            if not product_unit:
+                msg = (
+                    f"⚠️ Позиция {i}: у товара в базе не указана единица измерения. "
+                    f"Текущая единица: {unit}"
+                )
+                issues.append({
+                    "type": "unit_missing_in_product",
+                    "message": msg
+                })
+            elif not is_compatible_unit(unit, product_unit):
                 msg = (
                     f"⚠️ Позиция {i}: несовместимые единицы измерения: "
                     f"{unit} vs {product_unit}"

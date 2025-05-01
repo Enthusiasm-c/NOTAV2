@@ -53,8 +53,9 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
         if not PRODUCTS_CSV.exists():
             raise FileNotFoundError(f"Файл товаров не найден: {PRODUCTS_CSV}")
             
-        SUPPLIERS = pd.read_csv(SUPPLIERS_CSV)
-        PRODUCTS = pd.read_csv(PRODUCTS_CSV)
+        # Загружаем данные, заменяя пустые значения на None
+        SUPPLIERS = pd.read_csv(SUPPLIERS_CSV, na_values=['', 'nan', 'NaN'], keep_default_na=True)
+        PRODUCTS = pd.read_csv(PRODUCTS_CSV, na_values=['', 'nan', 'NaN'], keep_default_na=True)
         
         # Проверяем наличие обязательных колонок
         required_supplier_cols = {"name", "id", "code"}
@@ -165,8 +166,10 @@ def get_product_details(product_id: int) -> Optional[Dict[str, Any]]:
     
     if matches.empty:
         return None
-        
-    return matches.iloc[0].to_dict()
+    
+    # Получаем данные и заменяем NaN на None
+    product_dict = matches.iloc[0].to_dict()
+    return {k: None if pd.isna(v) else v for k, v in product_dict.items()}
 
 async def load_data_async() -> None:
     """Загружает данные из CSV файлов."""
