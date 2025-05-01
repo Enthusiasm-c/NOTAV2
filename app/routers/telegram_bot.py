@@ -28,7 +28,7 @@ from app.routers.fuzzy_match import fuzzy_match_product, find_similar_products
 from app.routers.syrve_export import export_to_syrve
 
 # Импортируем функции для создания UI
-from app.utils.markdown import make_invoice_preview, make_issue_list
+from app.utils.message_formatter import build_message
 
 # Импортируем состояния FSM
 from app.models.invoice_state import InvoiceStates, InvoiceEditStates
@@ -205,7 +205,8 @@ async def _check_product(name: str, i: int) -> Tuple[List[Dict[str, Any]], str |
     if not product_id:
         issues.append({
             "type": "product_not_found",
-            "message": f"❓ Позиция {i}: товар не найден: {name}"
+            "message": f"❓ Позиция {i}: товар не найден: {name}",
+            "index": i
         })
     elif confidence < 0.9:  # Если уверенность низкая
         similar = await find_similar_products(name, limit=3)
@@ -216,7 +217,8 @@ async def _check_product(name: str, i: int) -> Tuple[List[Dict[str, Any]], str |
         )
         issues.append({
             "type": "product_low_confidence",
-            "message": msg
+            "message": msg,
+            "index": i
         })
     return issues, product_id
 
@@ -227,7 +229,8 @@ def _check_quantity(qty: float, i: int) -> List[Dict[str, Any]]:
     if not qty or qty <= 0:
         issues.append({
             "type": "position_no_quantity",
-            "message": f"❌ Позиция {i}: не указано количество"
+            "message": f"❌ Позиция {i}: не указано количество",
+            "index": i
         })
     return issues
 
@@ -238,7 +241,8 @@ def _check_unit(unit: str, product_id: str | None, i: int) -> List[Dict[str, Any
     if not unit:
         issues.append({
             "type": "position_no_unit",
-            "message": f"❌ Позиция {i}: не указаны единицы измерения"
+            "message": f"❌ Позиция {i}: не указаны единицы измерения",
+            "index": i
         })
     elif product_id:
         product = get_product_details(product_id)
@@ -252,7 +256,8 @@ def _check_unit(unit: str, product_id: str | None, i: int) -> List[Dict[str, Any
                 )
                 issues.append({
                     "type": "unit_missing_in_product",
-                    "message": msg
+                    "message": msg,
+                    "index": i
                 })
             elif not is_compatible_unit(unit, product_unit):
                 msg = (
@@ -261,29 +266,32 @@ def _check_unit(unit: str, product_id: str | None, i: int) -> List[Dict[str, Any
                 )
                 issues.append({
                     "type": "unit_mismatch",
-                    "message": msg
+                    "message": msg,
+                    "index": i
                 })
     return issues
 
 
-def _check_total_sum(total: float, positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _check_total_sum(total: float, positions: List[Dict[str, Any]], i: int) -> List[Dict[str, Any]]:
     """Проверяет общую сумму накладной."""
     issues = []
     if not total or total <= 0:
         issues.append({
             "type": "no_total",
-            "message": "❌ Не указана общая сумма"
+            "message": "❌ Не указана общая сумма",
+            "index": i
         })
     else:
         positions_sum = calculate_total_sum(positions)
         if abs(total - positions_sum) > 0.01:  # Допускаем погрешность в 1 копейку
             msg = (
-                f"⚠️ Сумма позиций ({positions_sum:.2f}) "
+                f"⚠️ Позиция {i}: сумма позиции ({positions_sum:.2f}) "
                 f"не совпадает с общей суммой ({total:.2f})"
             )
             issues.append({
                 "type": "sum_mismatch",
-                "message": msg
+                "message": msg,
+                "index": i
             })
     return issues
 
@@ -309,7 +317,8 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
             if not name:
                 issues.append({
                     "type": "position_no_name",
-                    "message": f"❌ Позиция {i}: не указано название"
+                    "message": f"❌ Позиция {i}: не указано название",
+                    "index": i
                 })
                 continue
             
@@ -324,10 +333,10 @@ async def analyze_invoice_issues(data: Dict[str, Any]) -> Tuple[List[Dict[str, A
             # Проверяем единицы измерения
             unit = _safe_str(pos.get("unit"))
             issues.extend(_check_unit(unit, product_id, i))
-    
-    # Проверяем общую сумму
-    total = data.get("total_sum")
-    issues.extend(_check_total_sum(total, positions))
+            
+            # Проверяем сумму позиции
+            total = pos.get("sum")
+            issues.extend(_check_total_sum(total, [pos], i))
     
     # Формируем общее сообщение
     if not issues:
@@ -366,6 +375,9 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
         # Анализируем проблемы в распознанной накладной
         issues, parser_comment = await analyze_invoice_issues(data)
         
+        # Добавляем комментарий парсера в данные
+        data["parser_comment"] = parser_comment
+        
         # Сохраняем данные в состоянии
         await state.update_data(
             invoice=data,
@@ -377,7 +389,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
         await state.set_state(InvoiceStates.preview)
         
         # Формируем сообщение с подробным выводом проблемных позиций
-        message = make_invoice_preview(data, issues, show_all_issues=True)
+        message = build_message(data, issues)
         
         # Создаем клавиатуру для действий
         keyboard = []
@@ -399,7 +411,7 @@ async def handle_photo(m: Message, state: FSMContext, bot: Bot):
         kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
         
         # Отправляем сообщение с результатами распознавания
-        await m.answer(message, reply_markup=kb, parse_mode="Markdown")
+        await m.answer(message, reply_markup=kb, parse_mode="MarkdownV2")
         
     except Exception as exc:
         logger.exception("Ошибка обработки фото", exc_info=exc)
@@ -508,7 +520,7 @@ async def cb_edit_invoice(c: CallbackQuery, state: FSMContext):
     await state.set_state(InvoiceEditStates.issue_list)
     
     # Форматируем сообщение со списком проблем
-    message = make_issue_list(issues)
+    message = build_message(data, issues)
     
     # Создаем клавиатуру для списка проблем
     keyboard = []
@@ -541,5 +553,5 @@ async def cb_edit_invoice(c: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
     # Отправляем сообщение со списком проблем
-    await c.message.answer(message, reply_markup=kb, parse_mode="Markdown")
+    await c.message.answer(message, reply_markup=kb, parse_mode="MarkdownV2")
     await c.answer()
