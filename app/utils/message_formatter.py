@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 import structlog
+from .markdown_v2 import md2_escape, format_list_item
 
 logger = structlog.get_logger()
 
@@ -22,6 +23,9 @@ STATUS_EMOJIS = {
     "sum_mismatch": "💵",
     "other": "❓"
 }
+
+# Специальные символы Markdown V2
+_MD_V2_SPECIAL = r'_*[]()~`>#+-=|{}.!'
 
 # Приоритеты проблем (меньше = важнее)
 ISSUE_PRIORITIES = {
@@ -35,7 +39,7 @@ ISSUE_PRIORITIES = {
     "position_no_name": 4,
 }
 
-def escape_markdown(text: str) -> str:
+def escape_markdown(text: str | None) -> str:
     """
     Экранирует специальные символы Markdown V2.
     
@@ -48,21 +52,29 @@ def escape_markdown(text: str) -> str:
     if not text:
         return "—"
     
-    # Символы, которые нужно экранировать в Markdown V2
-    special_chars = r'_*[]()~`>#+-=|{}.!'
-    result = ""
     text = str(text)
+    result = ""
+    i = 0
     
-    # Обрабатываем отрицательные числа
-    if text.startswith("-"):
-        result = "\\-" + text[1:]
-    else:
-        result = text
-    
-    # Экранируем остальные специальные символы
-    for c in special_chars:
-        if c != "-" and c in result:  # Минус уже обработан
-            result = result.replace(c, f"\\{c}")
+    while i < len(text):
+        # Проверяем, является ли текущий символ эмодзи
+        if i + 1 < len(text) and 0x1F300 <= ord(text[i]) <= 0x1F9FF:
+            result += text[i]
+            i += 1
+            continue
+            
+        # Проверяем, не экранирован ли уже символ
+        if i > 0 and text[i-1] == '\\':
+            result += text[i]
+            i += 1
+            continue
+            
+        # Экранируем специальный символ
+        if text[i] in _MD_V2_SPECIAL:
+            result += "\\" + text[i]
+        else:
+            result += text[i]
+        i += 1
     
     return result
 
@@ -79,9 +91,10 @@ def format_number(value: float | None) -> str:
     if value is None:
         return "—"
     try:
-        # Форматируем число и экранируем точку и минус
+        # Форматируем число без лишних нулей после точки
         num_str = f"{float(value):.2f}".rstrip('0').rstrip('.')
-        return escape_markdown(num_str)
+        # Экранируем все специальные символы, включая минус и точку
+        return md2_escape(num_str)
     except (ValueError, TypeError):
         return "—"
 
@@ -101,11 +114,11 @@ def format_date(date_str: str) -> str:
         date = datetime.strptime(date_str, "%Y-%m-%d")
         return date.strftime("%d.%m.%Y")
     except ValueError:
-        return escape_markdown(date_str)
+        return md2_escape(date_str)
 
 def get_status_emoji(issues: List[Dict[str, Any]]) -> str:
     """
-    Определяет эмодзи-статус позиции по списку проблем.
+    Определяет эмодзи-статус для позиции на основе проблем.
     
     Args:
         issues: Список проблем
@@ -116,17 +129,14 @@ def get_status_emoji(issues: List[Dict[str, Any]]) -> str:
     if not issues:
         return STATUS_EMOJIS["ok"]
     
-    # Находим проблему с наивысшим приоритетом
-    min_priority = min(
-        (ISSUE_PRIORITIES.get(issue["type"], 99) for issue in issues),
-        default=99
-    )
+    # Определяем тип проблемы с наивысшим приоритетом
+    issue_types = [issue.get("type", "unknown_issue") for issue in issues]
     
-    if min_priority == 1:
+    if "product_not_found" in issue_types:
         return STATUS_EMOJIS["not_found"]
-    elif min_priority == 2:
+    elif "unit_mismatch" in issue_types:
         return STATUS_EMOJIS["unit_mismatch"]
-    elif min_priority == 3:
+    elif "sum_mismatch" in issue_types:
         return STATUS_EMOJIS["sum_mismatch"]
     else:
         return STATUS_EMOJIS["other"]
@@ -143,18 +153,15 @@ def format_position(pos: Dict[str, Any], idx: int, issues: List[Dict[str, Any]])
     Returns:
         str: Отформатированная строка позиции
     """
-    name = escape_markdown(pos.get("name", ""))
+    name = md2_escape(pos.get("name", ""))
     qty = format_number(pos.get("quantity"))
-    unit = escape_markdown(pos.get("unit", ""))
+    unit = md2_escape(pos.get("unit", ""))
     price = format_number(pos.get("price"))
     total = format_number(pos.get("sum"))
     
     status = get_status_emoji(issues)
     
-    return (
-        f"{idx}\\. {status} {name}\n"
-        f"     {qty} {unit} × {price} = {total}"
-    )
+    return format_list_item(idx, f"{status} {name}") + f"\n     {qty} {unit} × {price} = {total}"
 
 def build_message(data: Dict[str, Any], issues: List[Dict[str, Any]]) -> str:
     """
@@ -173,9 +180,9 @@ def build_message(data: Dict[str, Any], issues: List[Dict[str, Any]]) -> str:
         return "😕 Не удалось распознать ни одной позиции…"
     
     # Форматируем заголовок
-    supplier = escape_markdown(data.get("supplier", ""))
+    supplier = md2_escape(data.get("supplier", ""))
     date = format_date(data.get("date", ""))
-    invoice_no = escape_markdown(data.get("number", ""))
+    invoice_no = md2_escape(data.get("number", ""))
     
     header = f"📑 {supplier} • {date}"
     if invoice_no:
@@ -200,22 +207,36 @@ def build_message(data: Dict[str, Any], issues: List[Dict[str, Any]]) -> str:
         ]
         formatted_positions.append(format_position(pos, i, pos_issues))
     
+    # Собираем части сообщения
+    message_parts = []
+    message_parts.append(header)
+    message_parts.append(stats)
+    message_parts.extend(formatted_positions)
+    
     # Добавляем комментарий парсера, если есть
     parser_comment = data.get("parser_comment", "").strip()
-    comment_block = f"\n\nℹ️ {escape_markdown(parser_comment)}" if parser_comment else ""
+    if parser_comment:
+        message_parts.append(f"ℹ️ {md2_escape(parser_comment)}")
     
-    # Собираем сообщение
-    message = f"{header}\n{stats}\n\n"
-    message += "\n\n".join(formatted_positions)
-    message += comment_block
+    # Собираем сообщение с правильными отступами
+    message = header + "\n"  # Заголовок
+    message += stats  # Статистика
     
-    # Проверяем длину сообщения
-    if len(message) > 4093:  # Оставляем место для "..."
+    # Добавляем позиции с отступами
+    if formatted_positions:
+        message += "\n\n" + "\n\n".join(formatted_positions)
+    
+    # Добавляем комментарий с отступом
+    if parser_comment:
+        message += "\n\nℹ️ " + md2_escape(parser_comment)
+    
+    # Проверяем длину сообщения и обрезаем при необходимости
+    if len(message) > 4000:
         # Находим последний полный абзац
-        last_paragraph = message[:4090].rfind("\n\n")
-        if last_paragraph > 0:
-            message = message[:last_paragraph].rstrip() + "\n\n..."
-        else:
-            message = message[:4090].rstrip() + "..."
+        parts = message[:4000].split("\n\n")
+        message = "\n\n".join(parts[:-1])
+        
+        # Добавляем многоточие как обычный текст
+        message += "\n\n..."
     
     return message 

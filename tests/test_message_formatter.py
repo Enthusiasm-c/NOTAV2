@@ -1,5 +1,6 @@
 """Тесты для форматирования сообщений."""
 import pytest
+import re
 from pathlib import Path
 from app.utils.message_formatter import (
     escape_markdown,
@@ -7,7 +8,8 @@ from app.utils.message_formatter import (
     format_date,
     get_status_emoji,
     format_position,
-    build_message
+    build_message,
+    _MD_V2_SPECIAL
 )
 from tests.data.sample_invoices import TEST_INVOICES, TEST_ISSUES
 
@@ -21,17 +23,48 @@ def read_golden_file(name: str) -> str:
 
 def test_escape_markdown():
     """Тест экранирования символов Markdown."""
+    # Базовые тесты
     assert escape_markdown("Test*Bold*") == "Test\\*Bold\\*"
     assert escape_markdown("Price: 100.50") == "Price\\: 100\\.50"
     assert escape_markdown(None) == "—"
     assert escape_markdown("") == "—"
+    
+    # Тест на все специальные символы
+    test_str = "".join(_MD_V2_SPECIAL)
+    escaped = escape_markdown(test_str)
+    
+    # Проверяем, что все специальные символы экранированы
+    assert not re.search(rf'[{re.escape(_MD_V2_SPECIAL)}](?!\\)', escaped), \
+        "Найдены неэкранированные специальные символы"
+    
+    # Тест на числа и знаки
+    assert escape_markdown("-100.50") == "\\-100\\.50"
+    assert escape_markdown("+100.50") == "\\+100\\.50"
+    
+    # Тест на сложные случаи
+    complex_str = "1. Product [v2.0] (new) *special* price: -50.00!"
+    escaped_complex = escape_markdown(complex_str)
+    assert escaped_complex == "1\\. Product \\[v2\\.0\\] \\(new\\) \\*special\\* price\\: \\-50\\.00\\!"
 
 def test_format_number():
     """Тест форматирования чисел."""
-    assert format_number(100.50) == "100.5"
+    # Базовые тесты
+    assert format_number(100.50) == "100\\.5"
     assert format_number(100.00) == "100"
     assert format_number(None) == "—"
     assert format_number("not a number") == "—"
+    
+    # Тест отрицательных чисел
+    assert format_number(-100.50) == "\\-100\\.5"
+    assert format_number(-0.50) == "\\-0\\.5"
+    
+    # Тест больших чисел
+    assert format_number(1000000.00) == "1000000"
+    assert format_number(1000000.50) == "1000000\\.5"
+    
+    # Тест малых чисел
+    assert format_number(0.01) == "0\\.01"
+    assert format_number(0.00) == "0"
 
 def test_format_date():
     """Тест форматирования даты."""
@@ -50,6 +83,7 @@ def test_get_status_emoji():
 
 def test_format_position():
     """Тест форматирования позиции."""
+    # Базовый тест
     pos = {
         "name": "Test Product",
         "quantity": 2.0,
@@ -57,8 +91,22 @@ def test_format_position():
         "price": 100.50,
         "sum": 201.00
     }
-    expected = "1\\. ✅ Test Product\n     2 pcs × 100.5 = 201"
+    expected = "1\\. ✅ Test Product\n     2 pcs × 100\\.5 = 201"
     assert format_position(pos, 1, []) == expected
+    
+    # Тест со специальными символами
+    pos_special = {
+        "name": "Product [v2.0] (new)",
+        "quantity": -2.0,
+        "unit": "pcs.",
+        "price": -100.50,
+        "sum": -201.00
+    }
+    expected_special = (
+        "1\\. ✅ Product \\[v2\\.0\\] \\(new\\)\n"
+        "     \\-2 pcs\\. × \\-100\\.5 = \\-201"
+    )
+    assert format_position(pos_special, 1, []) == expected_special
 
 @pytest.mark.parametrize("case", [
     "ok",
