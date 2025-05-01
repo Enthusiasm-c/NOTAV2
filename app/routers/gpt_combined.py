@@ -107,9 +107,7 @@ async def _call_combined_api(image_bytes: bytes) -> Tuple[str, Dict[str, Any]]:
             if not raw_text:
                 raise ValueError("Failed to extract both raw text and JSON from API response")
                 
-            # Используем существующую функцию parse из gpt_parsing
-            # Но импортируем её прямо здесь, чтобы избежать циклического импорта
-            from app.routers.gpt_parsing import call_openai_with_retry
+            # Используем запасной вариант парсинга
             parsed_data = await call_openai_with_retry(raw_text)
         
         logger.info("Combined API call successful", 
@@ -347,3 +345,100 @@ async def ocr_and_parse(file_id: str, bot: Bot) -> Tuple[str, Dict[str, Any]]:
         mock_data = dict(_MOCK_RESULT)
         mock_data["supplier"] = f"[MOCK DUE TO ERROR] {mock_data['supplier']}"
         return mock_text, mock_data
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.NetworkError)),
+    wait=wait_exponential_jitter(initial=1, max=30),
+    stop=stop_after_attempt(6),
+    reraise=True,
+    before_sleep=lambda retry_state: logger.warning(
+        f"API call failed, retrying in {retry_state.next_action.sleep} seconds "
+        f"(attempt {retry_state.attempt_number}/{6})",
+        error=str(retry_state.outcome.exception())
+    ),
+)
+async def call_openai_with_retry(text: str) -> Dict[str, Any]:
+    """
+    Отправляет текст в OpenAI API для парсинга.
+    Используется как запасной вариант, если комбинированный запрос не удался.
+    
+    Args:
+        text: Текст для парсинга
+        
+    Returns:
+        Dict[str, Any]: Структурированные данные
+    """
+    settings = get_settings()
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+
+    payload = {
+        "model": "gpt-4",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a system that parses invoice text into structured data. "
+                    "Extract all relevant information and return it in JSON format with the following structure:\n"
+                    "{\n"
+                    "  \"supplier\": \"[supplier name]\",\n"
+                    "  \"buyer\": \"[buyer name]\",\n"
+                    "  \"date\": \"[YYYY-MM-DD]\",\n"
+                    "  \"number\": \"[invoice number if available]\",\n"
+                    "  \"positions\": [\n"
+                    "    {\n"
+                    "      \"name\": \"[item name]\",\n"
+                    "      \"quantity\": [numeric value],\n"
+                    "      \"unit\": \"[unit of measure]\",\n"
+                    "      \"price\": [unit price],\n"
+                    "      \"sum\": [total price]\n"
+                    "    }\n"
+                    "  ],\n"
+                    "  \"total_sum\": [total invoice amount]\n"
+                    "}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": text,
+            }
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                settings.gpt_chat_url,
+                json=payload,
+                headers=headers
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            content = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+            
+            # Извлекаем JSON из ответа
+            json_start = content.find("{")
+            json_end = content.rfind("}")
+            if json_start == -1 or json_end == -1:
+                raise ValueError("No JSON found in response")
+                
+            json_str = content[json_start:json_end + 1]
+            return json.loads(json_str)
+            
+    except Exception as e:
+        logger.error("OpenAI API error", error=str(e))
+        raise
