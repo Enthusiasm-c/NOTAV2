@@ -1,24 +1,19 @@
 # Основные зависимости
-aiogram==3.4.1            # Telegram-бот
-SQLAlchemy[asyncio]==2.0.29
-alembic==1.13.1
-asyncpg==0.29.0           # драйвер PostgreSQL
-pydantic>=2.4.1,<2.6.0    # Compatible with aiogram 3.4.1
-pydantic-settings>=2.0.0  # Настройки приложения
-python-dotenv==1.0.1
-httpx==0.27.0
+aiogram==3.20.0            # Telegram-бот
+httpx==0.27.0             # HTTP-клиент
 openai==1.25.0            # GPT-4 Vision/mini
-rapidfuzz[speed]==3.6.1   # быстрый fuzzy-поиск
-python-decouple==3.8
-tenacity==8.2.3           # retry with exponential backoff
-structlog==24.1.0         # structured logging
+pandas==2.2.0             # Работа с CSV
+rapidfuzz==3.6.1          # Быстрый fuzzy-поиск
+python-dotenv==1.0.1      # Загрузка переменных окружения
+structlog==24.1.0         # Структурированное логирование
+tenacity==8.2.3           # Retry с экспоненциальной задержкой
 
 # Зависимости для разработки
-pytest==8.0.0             # тестирование
-pytest-asyncio==0.23.5    # асинхронное тестирование
-pytest-cov==4.1.0         # покрытие кода тестами
-black==24.1.1             # форматирование кода
-mypy==1.8.0              # проверка типов
-isort==5.13.2            # сортировка импортов
-flake8==7.0.0            # линтер
-pre-commit==3.6.0        # pre-commit хуки
+pytest==8.0.0             # Тестирование
+pytest-asyncio==0.23.5    # Асинхронное тестирование
+pytest-cov==4.1.0         # Покрытие кода тестами
+black==24.1.1             # Форматирование кода
+mypy==1.8.0              # Проверка типов
+isort==5.13.2            # Сортировка импортов
+flake8==7.0.0            # Линтер
+pre-commit==3.6.0        # Pre-commit хуки
